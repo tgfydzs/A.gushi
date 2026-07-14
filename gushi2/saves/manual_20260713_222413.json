@@ -1,0 +1,138 @@
+{
+  "save_name": "manual_20260713_222413",
+  "saved_at": "2026-07-13T22:24:13.668633",
+  "world_state": {
+    "day": 1,
+    "time_of_day": "noon",
+    "weather": "sunny",
+    "player_location": "辉石城·冒险者公会"
+  },
+  "npcs": [
+    {
+      "npc_id": "innkeeper",
+      "name": "老约翰",
+      "role": "merchant",
+      "location": "辉石城·蜂蜜酒馆",
+      "emotion": "happy",
+      "action": "擦拭吧台",
+      "health_value": 100,
+      "is_alive": true,
+      "is_conscious": true,
+      "personality": {
+        "openness": 60,
+        "conscientiousness": 70,
+        "extraversion": 80,
+        "agreeableness": 75,
+        "neuroticism": 25,
+        "intelligence": 45,
+        "traits": [
+          "热情",
+          "见多识广",
+          "爱打听"
+        ]
+      },
+      "knowledge_count": 4,
+      "memory_count": 0,
+      "observation_count": 0,
+      "belief_count": 0,
+      "pending_count": 0,
+      "goal_count": 2,
+      "relationship_count": 0
+    },
+    {
+      "npc_id": "guild_receptionist",
+      "name": "艾琳",
+      "role": "scholar",
+      "location": "辉石城·冒险者公会",
+      "emotion": "neutral",
+      "action": "整理任务公告板",
+      "health_value": 100,
+      "is_alive": true,
+      "is_conscious": true,
+      "personality": {
+        "openness": 70,
+        "conscientiousness": 85,
+        "extraversion": 55,
+        "agreeableness": 60,
+        "neuroticism": 30,
+        "intelligence": 72,
+        "traits": [
+          "严谨",
+          "乐于助人",
+          "有点啰嗦"
+        ]
+      },
+      "knowledge_count": 6,
+      "memory_count": 0,
+      "observation_count": 2,
+      "belief_count": 0,
+      "pending_count": 1,
+      "goal_count": 3,
+      "relationship_count": 0
+    },
+    {
+      "npc_id": "guard_captain",
+      "name": "铁卫·巴克",
+      "role": "guard",
+      "location": "辉石城·南门",
+      "emotion": "neutral",
+      "action": "盘查过往行人",
+      "health_value": 100,
+      "is_alive": true,
+      "is_conscious": true,
+      "personality": {
+        "openness": 25,
+        "conscientiousness": 90,
+        "extraversion": 30,
+        "agreeableness": 35,
+        "neuroticism": 20,
+        "intelligence": 30,
+        "traits": [
+          "严肃",
+          "尽职",
+          "不善言辞"
+        ]
+      },
+      "knowledge_count": 2,
+      "memory_count": 0,
+      "observation_count": 0,
+      "belief_count": 0,
+      "pending_count": 0,
+      "goal_count": 2,
+      "relationship_count": 1
+    },
+    {
+      "npc_id": "mysterious_traveler",
+      "name": "兜帽人",
+      "role": "custom",
+      "location": "辉石城·蜂蜜酒馆",
+      "emotion": "neutral",
+      "action": "独自坐在角落喝酒",
+      "health_value": 100,
+      "is_alive": true,
+      "is_conscious": true,
+      "personality": {
+        "openness": 40,
+        "conscientiousness": 50,
+        "extraversion": 15,
+        "agreeableness": 30,
+        "neuroticism": 55,
+        "intelligence": 60,
+        "traits": [
+          "沉默寡言",
+          "警觉",
+          "似乎隐藏着什么"
+        ]
+      },
+      "knowledge_count": 2,
+      "memory_count": 0,
+      "observation_count": 0,
+      "belief_count": 0,
+      "pending_count": 0,
+      "goal_count": 2,
+      "relationship_count": 0
+    }
+  ],
+  "dialogue_history_count": 2,
+  "scene_memory": {}
+}

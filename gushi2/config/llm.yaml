@@ -1,0 +1,33 @@
+# LLM 配置
+# provider: deepseek / openai / mock
+# api_key 从环境变量读取（DEEPSEEK_API_KEY / OPENAI_API_KEY）
+
+provider: deepseek
+
+# Provider 列表（按 provider 名称选择）
+deepseek:
+  base_url: https://api.deepseek.com
+  model: deepseek-chat
+  temperature: 0.7
+  max_tokens: 2048
+
+openai:
+  base_url: https://api.openai.com/v1
+  model: gpt-4
+  temperature: 0.7
+  max_tokens: 2048
+
+# 备用：节点级温度覆盖（覆盖 Provider 默认值）
+node_overrides:
+  event:
+    temperature: 0.3
+  perception:
+    temperature: 0.5
+  reasoning:
+    temperature: 0.6
+  response:
+    temperature: 0.8
+  director:
+    temperature: 0.7
+  propagation:
+    temperature: 0.4

@@ -1,0 +1,22 @@
+# 运行时配置
+
+# LLM 模式: mock / real
+# mock: 使用 MockLLMManager（测试用，无需 API Key）
+# real: 使用真实 LLM Provider
+llm_mode: real #mock
+
+engine:
+  max_ticks: 0
+  verbose: false
+  auto_advance_time: true
+  time_advance_per_tick: 1
+
+llm:
+  enable_cache: false
+  retry_count: 2
+  timeout_seconds: 120
+
+logging:
+  level: INFO
+  log_dir: logs
+  enable_tick_log: true

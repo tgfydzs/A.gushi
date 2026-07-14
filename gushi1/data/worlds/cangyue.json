@@ -1,0 +1,29 @@
+{
+  "world_definition": {
+    "world_id": "cangyue",
+    "name": "苍月大陆",
+    "description": "一个剑与魔法的中世纪奇幻世界。王都「辉石城」是大陆的中心，周边散布着村庄、森林和古代遗迹。",
+    "rules": [
+      {"rule_id": "r1", "description": "在城内使用攻击魔法违法", "penalty": "逮捕并罚款"},
+      {"rule_id": "r2", "description": "杀害无辜者会被处死", "penalty": "死刑"},
+      {"rule_id": "r3", "description": "公会任务契约具有法律效力", "penalty": "违约者列入黑名单"},
+      {"rule_id": "r4", "description": "夜间宵禁后外出需通行证", "penalty": "拘留一晚"}
+    ],
+    "hidden_events": [
+      {
+        "event_id": "h1",
+        "trigger_condition": "调查古老石碑",
+        "event_content": "石碑上浮现出发光的符文，揭示了一段被遗忘的预言..."
+      },
+      {
+        "event_id": "h2",
+        "trigger_condition": "进入废弃矿洞深处",
+        "event_content": "黑暗中传来低沉的咆哮——矿洞里藏着一条沉睡的幼龙。"
+      }
+    ],
+    "known_events": [
+      "辉石城正在筹备一年一度的丰收祭",
+      "最近城外的商路出现了强盗"
+    ]
+  }
+}

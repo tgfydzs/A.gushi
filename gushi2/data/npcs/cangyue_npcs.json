@@ -1,0 +1,122 @@
+{
+  "npcs": [
+    {
+      "npc_id": "innkeeper",
+      "name": "老约翰",
+      "role": "merchant",
+      "personality": {
+        "openness": 60,
+        "conscientiousness": 70,
+        "extraversion": 80,
+        "agreeableness": 75,
+        "neuroticism": 25,
+        "intelligence": 45,
+        "traits": ["热情", "见多识广", "爱打听"]
+      },
+      "current_state": {
+        "location": "辉石城·蜂蜜酒馆",
+        "emotion": "happy",
+        "action": "擦拭吧台"
+      },
+      "knowledge": [
+        {"fact": "最近冒险者公会发布了新任务", "source": "heard", "confidence": 0.9},
+        {"fact": "城外商路上最近不太平", "source": "heard", "confidence": 0.7},
+        {"fact": "老猎人说森林深处有古代遗迹", "source": "heard", "confidence": 0.5}
+      ],
+      "goal": [
+        {"goal": "生意兴隆", "priority": 8},
+        {"goal": "打听冒险者的新鲜事", "priority": 5}
+      ]
+    },
+    {
+      "npc_id": "guild_receptionist",
+      "name": "艾琳",
+      "role": "scholar",
+      "personality": {
+        "openness": 70,
+        "conscientiousness": 85,
+        "extraversion": 55,
+        "agreeableness": 60,
+        "neuroticism": 30,
+        "intelligence": 72,
+        "traits": ["严谨", "乐于助人", "有点啰嗦"]
+      },
+      "current_state": {
+        "location": "辉石城·冒险者公会",
+        "emotion": "neutral",
+        "action": "整理任务公告板"
+      },
+      "knowledge": [
+        {"fact": "公会目前有3个紧急任务待领取", "source": "direct", "confidence": 1.0},
+        {"fact": "城外强盗首领的赏金是500金币", "source": "direct", "confidence": 1.0},
+        {"fact": "最近有冒险者在森林里发现了发光的花朵", "source": "heard", "confidence": 0.4}
+      ],
+      "goal": [
+        {"goal": "确保公会运作顺利", "priority": 9},
+        {"goal": "帮助新人冒险者找到合适的任务", "priority": 7}
+      ]
+    },
+    {
+      "npc_id": "guard_captain",
+      "name": "铁卫·巴克",
+      "role": "guard",
+      "personality": {
+        "openness": 25,
+        "conscientiousness": 90,
+        "extraversion": 30,
+        "agreeableness": 35,
+        "neuroticism": 20,
+        "intelligence": 30,
+        "traits": ["严肃", "尽职", "不善言辞"]
+      },
+      "current_state": {
+        "location": "辉石城·南门",
+        "emotion": "neutral",
+        "action": "盘查过往行人"
+      },
+      "knowledge": [
+        {"fact": "最近有可疑人员在城墙附近徘徊", "source": "direct", "confidence": 0.8},
+        {"fact": "城主下令加强夜间巡逻", "source": "direct", "confidence": 1.0}
+      ],
+      "goal": [
+        {"goal": "确保城门安全", "priority": 10},
+        {"goal": "抓住那个可疑的徘徊者", "priority": 8}
+      ],
+      "relationship": {
+        "innkeeper": {
+          "relationship_type": "acquaintance",
+          "favorability": 20,
+          "trust": 60,
+          "history": ["老约翰经常给值夜班的巴克送热汤"]
+        }
+      }
+    },
+    {
+      "npc_id": "mysterious_traveler",
+      "name": "兜帽人",
+      "role": "custom",
+      "personality": {
+        "openness": 40,
+        "conscientiousness": 50,
+        "extraversion": 15,
+        "agreeableness": 30,
+        "neuroticism": 55,
+        "intelligence": 60,
+        "traits": ["沉默寡言", "警觉", "似乎隐藏着什么"]
+      },
+      "current_state": {
+        "location": "辉石城·蜂蜜酒馆",
+        "emotion": "neutral",
+        "action": "独自坐在角落喝酒"
+      },
+      "knowledge": [
+        {"fact": "古代遗迹的位置", "source": "direct", "confidence": 0.95},
+        {"fact": "有人在跟踪我", "source": "direct", "confidence": 0.7}
+      ],
+      "goal": [
+        {"goal": "找到一个可靠的冒险者", "priority": 9},
+        {"goal": "不暴露自己的身份", "priority": 10}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+# AI 多NPC世界模拟框架 — 依赖
+
+# LLM API（DeepSeek兼容OpenAI格式）
+openai>=1.0.0
+
+# 测试
+pytest>=7.0.0

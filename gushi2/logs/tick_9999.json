@@ -1,0 +1,19 @@
+{
+  "tick_id": 9999,
+  "timestamp": "2026-07-13T22:19:35.790549",
+  "player_input": "test",
+  "elapsed_seconds": 0.0,
+  "success": true,
+  "error": "",
+  "narrative": "test narrative",
+  "nodes": [
+    {
+      "node": "N7",
+      "success": true,
+      "input_preview": "",
+      "output_preview": "{\"ok\":true}",
+      "error": "",
+      "timestamp": "2026-07-13T22:19:35.790545"
+    }
+  ]
+}

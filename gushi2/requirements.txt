@@ -1,0 +1,8 @@
+# gushi2 — AI多NPC世界模拟框架
+# Python 3.10+
+
+# LLM API调用（后续扩展具体厂商时增加）
+# openai>=1.0.0
+
+# 测试
+pytest>=7.0.0

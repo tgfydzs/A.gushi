@@ -1,0 +1,20 @@
+# 世界配置
+
+world:
+  world_name: 苍月大陆
+
+# 传播配置
+propagation:
+  enable: true
+  max_hops: 3
+  base_distortion_rate: 0.15
+
+# NPC 配置
+npc:
+  max_memory_per_npc: 50
+  max_knowledge_per_npc: 100
+
+# 记忆管理
+memory:
+  decay_enabled: true
+  importance_threshold: 3

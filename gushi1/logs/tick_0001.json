@@ -1,0 +1,83 @@
+{
+  "timestamp": "2026-07-12T20:58:31.750654",
+  "tick": 1,
+  "player_input": "你好老板，来一杯酒。",
+  "success": true,
+  "error": "",
+  "current_event_before": {
+    "location": "辉石城·蜂蜜酒馆",
+    "topic": "点酒",
+    "addressed_npc_id": "innkeeper",
+    "involved_npc_ids": [
+      "innkeeper"
+    ]
+  },
+  "event_layer_llm_output": "{\"continue_context\":false,\"location\":\"辉石城·蜂蜜酒馆\",\"topic\":\"点酒\",\"addressed_npc_id\":\"innkeeper\",\"involved_npc_ids\":[\"innkeeper\"],\"event_type\":\"dialogue\",\"scope\":\"private\"}",
+  "event_layer_llm_parsed": {
+    "continue_context": false,
+    "location": "辉石城·蜂蜜酒馆",
+    "topic": "点酒",
+    "addressed_npc_id": "innkeeper",
+    "involved_npc_ids": [
+      "innkeeper"
+    ],
+    "event_type": "dialogue",
+    "scope": "private"
+  },
+  "events": [
+    {
+      "event_id": "current",
+      "type": "dialogue",
+      "location": "辉石城·蜂蜜酒馆",
+      "scope": "private",
+      "description": "点酒",
+      "involved_npc_ids": [
+        "innkeeper"
+      ]
+    }
+  ],
+  "perception": [
+    {
+      "npc_id": "innkeeper",
+      "perceived_ids": [
+        "current"
+      ],
+      "missed_ids": [],
+      "summary": "老约翰注意到你走进酒馆，听到你说‘你好老板，来一杯酒’，他笑着点头，准备给你倒酒。"
+    },
+    {
+      "npc_id": "guild_receptionist",
+      "perceived_ids": [],
+      "missed_ids": [
+        "current"
+      ],
+      "summary": "没有感知到任何异常"
+    },
+    {
+      "npc_id": "guard_captain",
+      "perceived_ids": [],
+      "missed_ids": [
+        "current"
+      ],
+      "summary": "没有感知到任何异常"
+    },
+    {
+      "npc_id": "mysterious_traveler",
+      "perceived_ids": [],
+      "missed_ids": [
+        "current"
+      ],
+      "summary": "没有感知到任何异常"
+    }
+  ],
+  "responses": [
+    {
+      "npc_id": "innkeeper",
+      "npc_name": "老约翰",
+      "text": "哈哈，欢迎来到蜂蜜酒馆！来，这是刚倒好的蜂蜜酒，辉石城最好的！看你这身打扮，是刚到的冒险者吧？最近冒险者公会可热闹了，新任务多得很哪！",
+      "type": "speech",
+      "emotion": "happy"
+    }
+  ],
+  "narrative": "老约翰：「哈哈，欢迎来到蜂蜜酒馆！来，这是刚倒好的蜂蜜酒，辉石城最好的！看你这身打扮，是刚到的冒险者吧？最近冒险者公会可热闹了，新任务多得很哪！」"
+}
