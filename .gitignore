@@ -1,0 +1,12 @@
+# 所有pyc字节码文件
+*.pyc
+*.pyo
+*.pyd
+# 所有层级缓存文件夹
+__pycache__/
+# 虚拟环境、编辑器
+venv/
+.venv/
+.idea/
+.vscode/
+.idea
