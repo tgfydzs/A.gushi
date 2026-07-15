@@ -36,6 +36,9 @@ class B3NPC:
             '表更新成本UpdateCost': update_cost
         }}
 
+    def to_dict(self):
+        return self.npc_info
+
 
 
 

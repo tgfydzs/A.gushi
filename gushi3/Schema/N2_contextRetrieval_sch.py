@@ -24,6 +24,16 @@ class N2ContextRetrieval():
         self.event_context = event_context # 当前事件上下文
 
 
+    def to_dict(self):
+        return {
+            '事件id': self.context_retrieval_id,
+            '事件时间戳': time_int.ts_to_readable(self.context_retrieval_timestamp),
+            '世界层': self.WorldState.to_dict(),
+            'NPC列表': [npc.to_dict() for npc in self.npc_list],
+            '当前事件上下文': self.event_context
+        }
+
+
 
 
 
@@ -95,7 +105,11 @@ if __name__ == "__main__":
 
     npc = B3NPC(memory, belief, personality, goals, relationship, current_state, observation, inventory, pending_reasoning, update_cost, npc_name)
 
-    contextRetrieval = N2ContextRetrieval(world_state=worldState, npc_list=[npc])
+    contextRetrieval = N2ContextRetrieval(world_state=worldState, npc_list=[npc], event_context=['123', 'aasg'])
+
+
+
+    print(contextRetrieval.to_dict())
 
 
 

@@ -23,6 +23,13 @@ class N1PlayerInput:
         logger.info(f'timestamp: {self._timestamp}')
         logger.info(f'session_id: {self._session_id}')
 
+    def to_dict(self):
+        return {
+            '玩家输入': self._raw_text,
+            '时间戳': time_int.ts_to_readable(self._timestamp),
+            '会话id': self._session_id
+        }
+
 
 
 
@@ -30,3 +37,5 @@ class N1PlayerInput:
 
 if __name__ == '__main__':
     a = N1PlayerInput('good')
+
+    print(a.to_dict())

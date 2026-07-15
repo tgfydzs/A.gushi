@@ -5,6 +5,8 @@ base1 世界层
 
 
 from enum import Enum, unique
+from wsgiref.util import request_uri
+
 from common import time_int, uuid, log
 
 logger = log.SimpleLogger()
@@ -19,6 +21,13 @@ class B1WorldLayer:
         self.rule = world_dict['rule']
         self.state = world_dict['state']
         self.world_knowledge = world_dict['world_knowledge']
+
+    def to_dict(self):
+        return {
+            '世界规则列表': self.rule,
+            '世界状态列表': self.state,
+            '世界知识列表': self.world_knowledge
+        }
 
 
 
