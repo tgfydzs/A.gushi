@@ -1,6 +1,4 @@
-"""
-node1 玩家输入
-"""
+
 
 from enum import Enum, unique
 from common import time_int, uuid, log
@@ -9,6 +7,9 @@ logger = log.SimpleLogger()
 
 
 class N1PlayerInput:
+    """
+    node1 玩家输入
+    """
 
 
     @unique

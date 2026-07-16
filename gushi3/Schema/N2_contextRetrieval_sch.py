@@ -1,22 +1,23 @@
-"""
-node2 召集层
-职能：召集所需的npc和上下文
-"""
+
 
 
 from enum import Enum, unique
 from common import time_int, uuid, log
-from B1_worldState_sch import B1WorldLayer
-from B3_npc_sch import B3NPC
+from Schema.B1_worldState_sch import B1WorldLayer
+from Schema.B3_npc_sch import B3NPCLayer
 
 logger = log.SimpleLogger()
 
 
 
-class N2ContextRetrieval():
+class N2ContextRetrievalLayer:
+    """
+    node2 召集层
+    职能：召集所需的npc和上下文
+    """
 
 
-    def __init__(self, world_state: B1WorldLayer, npc_list: list[B3NPC], event_context: list):
+    def __init__(self, world_state: B1WorldLayer, npc_list: list[B3NPCLayer], event_context: list):
         self.context_retrieval_id = uuid.generate_session_id() # 事件id
         self.context_retrieval_timestamp = time_int.get_minute_ts() # 事件时间戳
         self.WorldState = world_state # 世界层
@@ -103,9 +104,9 @@ if __name__ == "__main__":
     update_cost = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
     npc_name = '王五'
 
-    npc = B3NPC(memory, belief, personality, goals, relationship, current_state, observation, inventory, pending_reasoning, update_cost, npc_name)
+    npc = B3NPCLayer(memory, belief, personality, goals, relationship, current_state, observation, inventory, pending_reasoning, update_cost, npc_name)
 
-    contextRetrieval = N2ContextRetrieval(world_state=worldState, npc_list=[npc], event_context=['123', 'aasg'])
+    contextRetrieval = N2ContextRetrievalLayer(world_state=worldState, npc_list=[npc], event_context=['123', 'aasg'])
 
 
 
