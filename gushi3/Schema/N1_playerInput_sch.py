@@ -1,9 +1,10 @@
 
 
 from enum import Enum, unique
-from common import time_int, uuid, log
+from common import time_int, uuid
+from common.log import get_logger
 
-logger = log.SimpleLogger()
+logger = get_logger(__name__)
 
 
 class N1PlayerInput:

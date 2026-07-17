@@ -1,13 +1,12 @@
+import time
 import requests
 from typing import List, Dict, Optional
+from common.base_cnf import *
+
+from common.log import get_logger
+_llm_log = get_logger("LLM")
 
 # ================== 模型基础配置 ======================
-# 接口密钥
-api_key = 'ms-206a1a90-061a-4029-9926-948d1c626fb9'
-# OpenAI兼容接口地址
-base_url = 'https://api-inference.modelscope.cn/v1/chat/completions'
-# 指定调用模型名称
-model_name = 'Qwen/Qwen3.5-27B'
 # 默认系统提示词
 DEFAULT_SYSTEM_PROMPT = "你是专业智能助手，回答简洁准确，逻辑清晰"
 
@@ -21,10 +20,13 @@ class LLMClient:
 
     def __init__(self):
         """初始化客户端基础鉴权信息与请求头"""
-        self.api_key = api_key
-        self.base_url = base_url
-        self.model_name = model_name
+        self.api_key = API_KEY
+        self.base_url = BASE_URL
+        self.model_name = MODEL_NAME
         self.default_system_prompt = DEFAULT_SYSTEM_PROMPT
+
+        _llm_log.info(f"LLMClient 初始化 | url={self.base_url} | model={self.model_name} | "
+                      f"key={self.api_key[:12] if self.api_key else 'None'}...")
 
         # 请求固定头部
         self.headers = {
@@ -64,6 +66,7 @@ class LLMClient:
             "messages": send_msgs
         }
 
+        t0 = time.time()
         try:
             resp = requests.post(
                 url=self.base_url,
@@ -71,12 +74,53 @@ class LLMClient:
                 json=payload,
                 timeout=90
             )
+            elapsed = time.time() - t0
+            _llm_log.info(f"chat({self.model_name}) 请求完成，耗时 {elapsed:.1f}s")
             resp.raise_for_status()
             res_data = resp.json()
             reply = res_data["choices"][0]["message"]["content"].strip()
             return reply
         except Exception as e:
+            elapsed = time.time() - t0
+            _llm_log.error(f"chat 请求失败(耗时{elapsed:.1f}s)：{str(e)}")
             return f"请求失败：{str(e)}"
+
+
+    def chat_by_context(self, context):
+        """
+        上下文由外部维护，最新消息放到列表最后
+        :param context: 上下文列表，例：[{"role": "system", "content": use_sys}, ...]
+        :return:
+        """
+        payload = {
+            'model': self.model_name,
+            'messages': context
+        }
+        t0 = time.time()
+        try:
+            resp = requests.post(
+                url=self.base_url,
+                headers=self.headers,
+                json=payload,
+                timeout=90
+            )
+            elapsed = time.time() - t0
+            _llm_log.info(f"chat_by_context({self.model_name}) 请求完成，耗时 {elapsed:.1f}s")
+            resp.raise_for_status()
+            res_data = resp.json()
+            reply = res_data["choices"][0]["message"]["content"].strip()
+            return reply
+        except Exception as e:
+            elapsed = time.time() - t0
+            _llm_log.error(f"chat_by_context 请求失败(耗时{elapsed:.1f}s)：{str(e)}")
+            return f'请求失败{str(e)}'
+
+
+
+
+
+
+
 
 
 # 调用示例

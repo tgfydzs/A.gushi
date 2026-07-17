@@ -1,9 +1,10 @@
 from enum import Enum, unique
 
 from Schema.B1_worldState_sch import B1WorldLayer
-from common import time_int, uuid, log
+from common import time_int, uuid
+from common.log import get_logger
 
-logger = log.SimpleLogger()
+logger = get_logger(__name__)
 
 
 

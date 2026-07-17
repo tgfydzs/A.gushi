@@ -3,9 +3,9 @@ import os
 from typing import Dict, Any, List
 
 from Schema.B3_npc_sch import B3NPCLayer
-from common.log import SimpleLogger
+from common.log import get_logger
 
-logger = SimpleLogger()
+logger = get_logger("small_tool")
 
 
 
