@@ -5,7 +5,8 @@ from enum import Enum, unique
 from common import time_int, uuid
 from common.log import get_logger
 from Schema.B1_worldState_sch import B1WorldLayer
-from Schema.B3_npc_sch import B3NPCLayer
+from Schema.B3_npclist_sch import B3NPCListLayer
+from Schema.B3_1_npc_sch import B3NPCLayer
 from Schema.Context_sch import ContextHistory
 
 logger = get_logger(__name__)
@@ -16,11 +17,11 @@ class N2ContextRetrievalLayer:
     """
     将 世界层、npc对象列表、事件上下文 封装为事件层
     :param world_state: B1WorldLayer 世界层
-    :param npc_list: list[B3NPCLayer] NPC层列表
+    :param npc_list: B3NPCListLayer NPC列表层
     :param event_context: ContextHistory 事件上下文对象
     """
 
-    def __init__(self, world_state: B1WorldLayer, npc_list: list[B3NPCLayer], event_context: ContextHistory):
+    def __init__(self, world_state: B1WorldLayer, npc_list: B3NPCListLayer, event_context: ContextHistory):
         self.context_retrieval_id = uuid.generate_session_id() # 事件id
         self.context_retrieval_timestamp = time_int.get_minute_ts() # 事件时间戳
         self.WorldState = world_state # 世界层
@@ -33,7 +34,7 @@ class N2ContextRetrievalLayer:
             '事件id': self.context_retrieval_id,
             '事件时间戳': time_int.ts_to_readable(self.context_retrieval_timestamp),
             '世界层': self.WorldState.to_dict(),
-            'NPC列表': [npc.to_dict() for npc in self.npc_list],
+            'NPC列表': self.npc_list.to_dict()['NPC列表'],
             '当前事件上下文': self.event_context.context
         }
 
@@ -107,9 +108,24 @@ if __name__ == "__main__":
     update_cost = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
     npc_name = '王五'
 
-    npc = B3NPCLayer(memory, belief, personality, goals, relationship, current_state, observation, inventory, pending_reasoning, update_cost, npc_name)
+    npc_dict = {
+        '名字Name': npc_name,
+        '信念Belief': belief,
+        '性格Personality': personality,
+        '生活目标Goals': goals,
+        '好感度Relationship': relationship,
+        '当前状态CurrentState': current_state,
+        '观察Observation': observation,
+        '持有物Inventory': inventory,
+        '待解释事件PendingReasoning': pending_reasoning,
+        '表更新成本UpdateCost': update_cost
+    }
+    npc = B3NPCLayer(npc_dict)
 
-    contextRetrieval = N2ContextRetrievalLayer(world_state=worldState, npc_list=[npc], event_context=['123', 'aasg'])
+    npc_list = B3NPCListLayer()
+    npc_list.all(npc)
+
+    contextRetrieval = N2ContextRetrievalLayer(world_state=worldState, npc_list=npc_list, event_context=['123', 'aasg'])
 
 
 

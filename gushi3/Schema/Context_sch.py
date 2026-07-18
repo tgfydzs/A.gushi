@@ -34,6 +34,10 @@ class ContextHistory:
         self.context = []
 
 
+    def __len__(self):
+        return len(self.context)
+
+
 
 
 

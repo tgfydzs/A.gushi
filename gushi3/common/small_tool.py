@@ -2,7 +2,8 @@ import json
 import os
 from typing import Dict, Any, List
 
-from Schema.B3_npc_sch import B3NPCLayer
+from Schema.B3_npclist_sch import B3NPCListLayer
+from Schema.B3_1_npc_sch import B3NPCLayer
 from common.log import get_logger
 
 logger = get_logger("small_tool")
@@ -52,16 +53,16 @@ def walk_category_files(root_folder: str):
     return file_list
 
 
-def load_npc_list_from_json(file_path: str) -> list[B3NPCLayer]:
-    """读取你这个数组格式JSON，返回NPC对象列表"""
-    npc_list = []
+def load_npc_list_from_json(file_path: str) -> B3NPCListLayer:
+    """读取你这个数组格式JSON，返回NPC列表层对象"""
+    npc_list_layer = B3NPCListLayer()
     with open(file_path, "r", encoding="utf-8") as f:
         data_list = json.load(f)
         for i in data_list:
             npc = B3NPCLayer(i)
-            npc_list.append(npc)
+            npc_list_layer.add(npc)
 
-    return npc_list
+    return npc_list_layer
 
 
 

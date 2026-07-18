@@ -1,23 +1,27 @@
 # NPC层数据结构，使用、创建、注意点
 ## NPC数据文件使用json格式
+### 包含字段：知识记忆Memory，信念Belief， 性格Personality， 生活目标Goals， 好感度Relationship， 当前状态CurrentState， 观察Observation， 持有物Inventory， 待解释事件PendingReasoning， 表更新成本UpdateCost
 ### 示例：
-    {
-        "名字Name": "李世民",
-        "知识记忆Memory": [],
-        "信念Belief": [],
-        "性格Personality": [],
-        "生活目标Goals": [],
-        "好感度Relationship": [],
-        "当前状态CurrentState": [],
-        "观察Observation": [],
-        "持有物Inventory": [],
-        "待解释事件PendingReasoning": [],
-        "表更新成本UpdateCost": []
-    }
+    [
+        {
+            "名字Name": "李世民",
+            "知识记忆Memory": [],
+            "信念Belief": [],
+            "性格Personality": [],
+            "生活目标Goals": [],
+            "好感度Relationship": [],
+            "当前状态CurrentState": [],
+            "观察Observation": [],
+            "持有物Inventory": {},
+            "待解释事件PendingReasoning": [],
+            "表更新成本UpdateCost": []
+        }
+    ]
 ## 最外层保持标准字段，内部为列表，列表内部遵循单一语义单元（描述一件事情），为后续可能的向量化留足空间
 ### 举例（其中一个字段）：
     "知识记忆Memory": ["2001年出生", "出生时，天降异象，空中有金色闪电，且天空好似有空明之音", "3岁前不会走路，行动不能自理，需要人看护"]
 ## 任意数据源不做枚举限制，也不做格式限制，用文本标记即可，保持灵活度
+## npc数量众多，因此嵌套一层目录（分组），内部一个json文件（细分组）装一组npc，根目录下不读取文件，读取分组目录下json
 
 
 
@@ -68,9 +72,10 @@
     "好感度Relationship": ["梅赛德斯：8", "新皇登基，大赦天下：-5", "玩家：10"]
 
 
-## 当前状态CurrentState（list）
+## 当前状态CurrentState（dict）
 ### 用途：生成话语、做事的评定规则之一，也可存放其他的当前状态，是相对更频繁更新的一张表
-    当前状态CurrentState": ["大腿贯穿伤，血流不止", "生命弥留之际", "难过", "不想死", "练气巅峰"]
+### 必有字段：当前所处位置（描述尽量详细）、实力等级、当前身份
+    当前状态CurrentState": {"当前所处位置":"神圣帝国的帝都莱茵酒馆", "":"", ...}
 
 
 ## 观察Observation（list）默认为空
@@ -78,9 +83,10 @@
     "观察Observation": ["这里真漂亮", ""]
 
 
-## 持有物Inventory（list）
-### 用途：模拟时常用的能力来源，一般是客观存在的事物，叠加时用*分隔
-    "持有物Inventory": ["玄阶功法·游龙步*2", "玄铁宝剑*5", "京城南街三进宅子"]
+## 持有物Inventory（dict）
+### 用途：模拟时常用的判定来源之一，一般是客观存在的事物
+### 以字典存有，key为物品名称、统称，value为具体内容
+    "持有物Inventory": {"紫金雷花":"中品*1,下品*10", "上京豪宅":"东三环*2，西二环*1", "功法","天阶功法：生息决*1，天阶功法：天演大法*1"}
 
 
 ## 待解释事件PendingReasoning（list）

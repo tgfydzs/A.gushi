@@ -86,7 +86,7 @@ class LLMClient:
             return f"请求失败：{str(e)}"
 
 
-    def chat_by_context(self, context):
+    def chat_by_context(self, context: list):
         """
         上下文由外部维护，最新消息放到列表最后
         :param context: 上下文列表，例：[{"role": "system", "content": use_sys}, ...]
