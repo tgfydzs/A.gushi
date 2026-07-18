@@ -31,7 +31,7 @@ logger = get_logger("N2_Test")
 global_context = ContextHistory()
 event_context = ContextHistory()
 
-# 上下文判断类
+# 事件层处理器
 event_judge = N2_CE_Process()
 
 
@@ -45,10 +45,8 @@ npcFileList = walk_category_files(npc_source_path)
 logger.debug(f'读取的npc文件列表{npcFileList}')
 
 for npcFile in npcFileList:
-    npcList = load_npc_list_from_json(npcFile)
-logger.debug(f'取到npc数量{len(npcList)}')
-for npc in npcList:
-    logger.debug(npc.to_dict())
+    all_npc_list = load_npc_list_from_json(npcFile)
+logger.debug(f'取到npc数量:{len(all_npc_list)}')
 
 
 
@@ -66,11 +64,13 @@ def add_context(context):
 
 # =================== 测试 =====================
 # 假的上下文
-list1 = [
+history = [
     '玩家：走到艾琳面前，询问：请问你是冒险者么？',
     '艾琳：您好，我是冒险者工会的前台，我没有冒险者身份，请问您有什么需要？',
+    '玩家：我想了解一下，如果想成为冒险者，需要经过什么流程？',
+    '艾琳：需要先在公会登记，然后完成基础测试，通过后才能获得冒险者徽章。'
 ]
-for i in list1:
+for i in history:
     add_context(i)
 
 
@@ -86,13 +86,13 @@ while True:
 
     # -------------------- 判断是否为新事件 -----------------
     is_new_event = event_judge.judge(event_context)
-    logger.debug(f'判断新事件结果{str(is_new_event)}')
+    logger.debug(f'事件处理结果：{str(is_new_event)}')
 
-    if is_new_event:
+    if is_new_event['is_new_event']:
         event_context.new_context()
 
-    # -------------------- 打包为事件层对象 -----------------
-    event_layer = N2ContextRetrievalLayer(b1WorldLayer, npcList, event_context)
+    # -------------------- 将事件，和npc传入感知层，处理npc所得事情 -----------------
+
 
 
 

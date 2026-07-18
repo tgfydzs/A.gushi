@@ -16,7 +16,7 @@ class N2_CE_Process:
 
 
 
-    def judge(self, context_event: ContextHistory) -> bool:
+    def judge(self, context_event: ContextHistory) -> dict:
         """
         接受ContextHistory对象，为当前事件上下文
         :param context_event: 接受ContextHistory对象，用于ai做新事件判断
@@ -34,9 +34,8 @@ class N2_CE_Process:
 
         replay = self.cli.chat_by_context(all_context)
         json_replay = json.loads(replay)
-        judge = json_replay['is_new_event']
 
-        return judge
+        return json_replay
 
 
 
