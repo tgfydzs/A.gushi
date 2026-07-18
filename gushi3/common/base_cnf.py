@@ -3,7 +3,7 @@ import os
 BASE_PATH = r'E:\A.gushi\gushi3'
 
 # ----------------- 日志 ---------------------
-LOG_PATH = r'log\N2.log'
+LOG_PATH = r'log\N3.log'
 LOG_FILE_LEVEL = 20 #日志文件记录等级
 LOG_CONSOLE_LEVEL = 30 #控制台打印等级
 

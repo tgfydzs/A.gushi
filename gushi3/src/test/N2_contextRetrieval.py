@@ -21,7 +21,7 @@ from Schema.N2_contextRetrieval_sch import N2ContextRetrievalLayer
 from Schema.Context_sch import ContextHistory
 
 # 初始化日志系统（全局唯一文件句柄，所有模块共享）
-log_cfg.setup(session_id="test001", file_min_score=10, console_min_score=30)
+log_cfg.setup(session_id="test001")
 logger = get_logger("N2_Test")
 
 
@@ -51,8 +51,11 @@ npc_source_path = os.path.join(BASE_PATH, NPC_DATA_ROOT_PATH)
 npcFileList = walk_category_files(npc_source_path)
 logger.debug(f'读取的npc文件列表{npcFileList}')
 
+all_npc_list = B3NPCListLayer()
 for npcFile in npcFileList:
-    all_npc_list = load_npc_list_from_json(npcFile)
+    file_npcs = load_npc_list_from_json(npcFile)
+    for npc in file_npcs:
+        all_npc_list.add(npc)
 logger.debug(f'取到npc数量:{len(all_npc_list)}')
 
 
@@ -91,24 +94,30 @@ player = B4PlayerLayer(current_state)
 #====================================== 主流程 ==============================================
 while True:
     # --------------------- 玩家输入 ---------------------
-    player_input = input('>')
-    logger.debug(player_input)
-    if player_input == 'exit':
+    raw_input = input('>')
+    logger.info(f'玩家输入：{raw_input}')
+    if raw_input == 'exit':
         break
-    logger.debug(f'{player.player_dict['玩家名称name']}输入前，事件npc数量：{len(event_npc)}，事件上下文长度：{len(event_context)}')
-    logger.debug(f'{player.player_dict['玩家名称name']}输入：{player_input}')
-    add_context_all(f'{player.player_dict['玩家名称name']}：{player_input}')
+
+    # --- 移动标记解析 ---
+    player_input = resolve_move_markers(raw_input, b1WorldLayer)
+    if player_input is None:
+        continue  # 用户取消了移动导航
+
+    logger.info(f'{player.player_dict['玩家名称name']}输入前，事件npc数量：{len(event_npc)}，事件上下文长度：{len(event_context)}')
+    logger.info(f'{player.player_dict['玩家名称name']}输入：{player_input}')
+    add_context_all(f'{player.player_dict['玩家名称name']}（玩家）：{player_input}')
 
     # -------------------- 事件层工作 --------------------
     event_back = event_judge.judge(event_context)
-    logger.debug(f'事件处理结果：{event_back}')
+    logger.info(f'事件处理结果：{event_back}')
     # 创建新事件
     if event_back['is_new_event']:
         event_npc.new_list()
         related_npc.new_list() # 新事件，清空npc列表，若有增删npc下部正常处理
         event_context.new_context() # 新事件，清空事件上下文
 
-        event_context.add_context(f'{player.player_dict['玩家名称name']}：{player_input}')
+        event_context.add_context(f'{player.player_dict['玩家名称name']}（玩家）：{player_input}')
 
 
     # 处理事件npc列表
@@ -130,13 +139,13 @@ while True:
             npc = all_npc_list.get_npc(npc_name)
             related_npc.delete(npc)
 
-    logger.debug(f'事件层处理后,事件回应npc数量：{len(event_npc)}，事件涉及/潜在npc数量{len(related_npc)}，事件上下文长度：{len(event_context)}')
+    logger.info(f'事件层处理后,事件回应npc数量：{len(event_npc)}，事件涉及/潜在npc数量{len(related_npc)}，事件上下文长度：{len(event_context)}')
 
 
     # ----------------------- 感知层 ----------------------------
     # ----------- 将事件，和npc传入感知层，处理npc所得事情 ------------
-    json_replay = info_filter.judge_for_npc(event_context, event_npc, related_npc)
-    logger.debug(f'感知层处理结果：{json_replay}')
+    json_replay = info_filter.judge_for_npc(event_context, event_npc, related_npc, player)
+    logger.info(f'感知层处理结果：{json_replay}')
 
 
 
