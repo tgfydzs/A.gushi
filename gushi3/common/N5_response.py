@@ -19,11 +19,11 @@ class N5_Response():
         self.logger = logger if logger else get_logger('N5_response')
         self.cli = LLMClient()
 
-    def response_say(self, npc_inst: B3NPCLayer, player_input: str, context_history: list = None, objective_facts: str = ''):
+    def response_say(self, npc_inst: B3NPCLayer, perception_msg: str, context_history: list = None, objective_facts: str = ''):
         """
         主观处理：生成NPC回应，并对NPC状态做主观微调
         :param npc_inst: N4更新后的NPC实例
-        :param player_input: 玩家原始输入
+        :param perception_msg: N3感知层分发的带方向消息
         :param context_history: 对话上下文
         :param objective_facts: N4产出的客观事实
         :return: (B3NPCLayer, str) 主观微调后的NPC实例和回应语句
@@ -36,7 +36,7 @@ class N5_Response():
         user_input = {
             '你是谁': npc_inst.to_dict(),
             '对话上下文': context_history if context_history else [],
-            '玩家输入': player_input,
+            '感知输入': perception_msg,
             '客观事实ObjectiveFacts': objective_facts,
         }
         all_context.append({'role': 'user', 'content': json.dumps(user_input, ensure_ascii=False)})

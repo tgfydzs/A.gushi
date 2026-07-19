@@ -17,11 +17,11 @@ class N4_Update:
         self.logger = logger if logger else get_logger('N4_Update')
         self.cli = LLMClient()
 
-    def update_for_npc(self, npc_inst: B3NPCLayer, player_inst: B4PlayerLayer, player_input: str):
+    def update_for_npc(self, npc_inst: B3NPCLayer, player_inst: B4PlayerLayer, perception_msg: str):
         """
         :param npc_inst:   NPC 实例
         :param player_inst: 玩家实例
-        :param player_input: 玩家输入文本
+        :param perception_msg: N3感知层分发的带方向消息（如"玩家对你说：..."或"玩家对[名字]说：..."）
         :return: (更新后的B3NPCLayer, 玩家增量dict, 客观事实str)
         """
         with open(os.path.join(BASE_PATH, r'prompt\N4_update_sys'), 'r', encoding='utf-8') as f:
@@ -31,7 +31,7 @@ class N4_Update:
         all_context.append({'role': 'system', 'content': sys_prompt})
         user_input = {
             '你是谁': npc_inst.to_dict(),
-            '玩家输入': player_input,
+            '感知输入': perception_msg,
             '玩家实例': player_inst.player_dict
         }
         all_context.append({'role': 'user', 'content': json.dumps(user_input, ensure_ascii=False)})

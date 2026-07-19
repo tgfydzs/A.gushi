@@ -35,12 +35,26 @@ n4_update = N4_Update()              # N4 更新层（客观）
 n5_response = N5_Response()          # N5 响应层（主观）
 
 player_name = gc.player.player_dict['玩家名称name']
+last_snapshot = None  # 上轮执行前的快照，用于 !! 回滚
 
 
 # ===================== 主循环 =====================
 while True:
     # ============ N1: 玩家输入 ============
     raw_input = input('>')
+
+    # 空输入跳过
+    if not raw_input.strip():
+        continue
+
+    # 撤回：恢复至上轮输入前的完整快照（上下文 + NPC状态 + 玩家状态）
+    if raw_input.strip() == '!!':
+        if last_snapshot is not None:
+            gc.restore(last_snapshot)
+            print('↩ 已撤回上一条（状态已全部回滚）')
+        else:
+            print('↩ 没有可撤回的内容')
+        continue
 
     # 命令处理（存档/读档等，非流水线交互）
     cmd_result = gc.handle_command(raw_input)
@@ -53,6 +67,9 @@ while True:
     player_input = resolve_move_markers(raw_input, gc.b1WorldLayer)
     if player_input is None:
         continue
+
+    # ★ 流水线执行前保存全量快照，供 !! 撤回
+    last_snapshot = gc.snapshot()
 
     logger.info(f'{player_name}输入：{player_input}')
     gc.add_context_all(f'{player_name}（玩家）：{player_input}')
@@ -87,33 +104,33 @@ while True:
     event_perceptions = dict_replay.get('事件涉及的npc', {})
     related_perceptions = dict_replay.get('事件涉及/潜在npc', {})
 
-    # 收集所有任务：(npc_name, npc_instance, should_print_response)
+    # 收集所有任务：(npc_name, npc_instance, should_print, perception_msg)
     tasks = []
 
-    for npc_name in event_perceptions:
+    for npc_name, perception_msg in event_perceptions.items():
         npc = gc.event_npc.get_npc(npc_name)
         if npc is None:
             logger.warn(f'事件NPC [{npc_name}] 未找到')
             continue
-        tasks.append((npc_name, npc, True))
+        tasks.append((npc_name, npc, True, perception_msg))
 
-    for npc_name in related_perceptions:
+    for npc_name, perception_msg in related_perceptions.items():
         npc = gc.related_npc.get_npc(npc_name) or gc.all_npc_list.get_npc(npc_name)
         if npc is None:
             logger.warn(f'潜在NPC [{npc_name}] 未找到')
             continue
-        tasks.append((npc_name, npc, False))
+        tasks.append((npc_name, npc, False, perception_msg))
 
     if tasks:
         # 并行执行，max_workers 上限 6，不同NPC互不依赖
         with ThreadPoolExecutor(max_workers=min(len(tasks), 6)) as pool:
             futures = {}
-            for npc_name, npc, should_print in tasks:
+            for npc_name, npc, should_print, perception_msg in tasks:
                 fut = pool.submit(
                     gc.process_npc_pipeline,
                     npc_name, npc, should_print,
                     n4_update, n5_response,
-                    player_input
+                    perception_msg
                 )
                 futures[fut] = npc_name
 
@@ -126,6 +143,8 @@ while True:
                     gc.sync_npc_to_lists(npc_final)
                     if should_print:
                         print(f'\n{response}')
+                        if response:
+                            gc.add_global_context(response)  # NPC回应只入全局，不入事件
                     # 合并玩家增量
                     if player_delta:
                         merge_delta(merged_player_delta, player_delta)

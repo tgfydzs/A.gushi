@@ -4,6 +4,7 @@
 """
 
 import os
+from copy import deepcopy
 
 from common.log import get_logger
 from common import log as log_mod
@@ -82,9 +83,41 @@ class GameController:
     # ===================== 小工具 =====================
 
     def add_context_all(self, text: str):
-        """同时写入全局上下文和事件上下文"""
+        """同时写入全局上下文和事件上下文（玩家输入、地段传播等AI需要处理的内容）"""
         self.global_context.add_context(text)
         self.event_context.add_context(text)
+
+    def add_global_context(self, text: str):
+        """仅写入全局上下文（NPC回应等仅供玩家查看的内容，不给AI处理）"""
+        self.global_context.add_context(text)
+
+    def snapshot(self) -> dict:
+        """返回当前全部运行时状态的深拷贝快照，供 `!!` 回滚使用。"""
+        return {
+            'global_context': (deepcopy(self.global_context.context), self.global_context.count),
+            'event_context': (deepcopy(self.event_context.context), self.event_context.count),
+            'event_npc': deepcopy(self.event_npc.npc_list),
+            'related_npc': deepcopy(self.related_npc.npc_list),
+            'all_npc_list': deepcopy(self.all_npc_list.npc_list),
+            'player': deepcopy(self.player.player_dict),
+            'world': deepcopy(self.b1WorldLayer.dict),
+        }
+
+    def restore(self, snap: dict):
+        """从 snapshot() 产出的快照全量恢复运行时状态。"""
+        self.global_context = ContextHistory(snap['global_context'][0], snap['global_context'][1])
+        self.event_context = ContextHistory(snap['event_context'][0], snap['event_context'][1])
+        self.event_npc = B3NPCListLayer()
+        for n in snap['event_npc']:
+            self.event_npc.add(n)
+        self.related_npc = B3NPCListLayer()
+        for n in snap['related_npc']:
+            self.related_npc.add(n)
+        self.all_npc_list = B3NPCListLayer()
+        for n in snap['all_npc_list']:
+            self.all_npc_list.add(n)
+        self.player = B4PlayerLayer(snap['player'])
+        self.b1WorldLayer = B1WorldLayer(snap['world'])
 
     def sync_npc_to_lists(self, updated_npc: B3NPCLayer):
         """
@@ -103,22 +136,22 @@ class GameController:
     # ===================== NPC 流水线 =====================
 
     def process_npc_pipeline(self, npc_name: str, npc: B3NPCLayer, should_print: bool,
-                             n4_update, n5_response, player_input: str):
+                             n4_update, n5_response, perception_msg: str):
         """
         单个NPC的完整 N4→N5 流水线，供 ThreadPoolExecutor 并行调用。
 
+        :param perception_msg: N3感知层分发的带方向消息（"玩家对你说：..."或"玩家对[名字]说：..."）
         :return: (npc_final, response, should_print, player_delta)
-                 player_delta = {"增加": {...}, "删减": {...}} 用于合并回玩家实例
         """
         tag = '' if should_print else '（潜在）'
 
         # N4 客观处理（有玩家实例，比对客观事物）
-        npc_obj, player_delta, facts = n4_update.update_for_npc(npc, self.player, player_input)
+        npc_obj, player_delta, facts = n4_update.update_for_npc(npc, self.player, perception_msg)
         logger.info(f'[{npc_name}]{tag} 客观事实：{facts}')
 
         # N5 主观处理（无玩家实例，防止隐藏事实暴露）
         npc_final, response = n5_response.response_say(
-            npc_obj, player_input, self.global_context.context, facts
+            npc_obj, perception_msg, self.global_context.context, facts
         )
         if should_print:
             logger.info(f'[{npc_name}] 回应：{response}')
@@ -276,7 +309,32 @@ class GameController:
                 print('📂 已快速读档')
                 logger.info(f'快速读档完成，全局轮次：{self.global_context.count}')
 
+        elif cmd == '/context':
+            which = arg if arg else 'global'
+            if which == 'event':
+                ctx = self.event_context
+                label = f'事件上下文（{ctx.count}轮）'
+            else:
+                ctx = self.global_context
+                label = f'全局上下文（{ctx.count}轮）'
+            print(f'┌ {label}')
+            if ctx.context:
+                for line in ctx.context:
+                    print(f'│ {line}')
+            else:
+                print('│ (空)')
+            print(f'└── 共 {len(ctx.context)} 条')
+
+        elif cmd == '/npcs':
+            print(f'┌ 事件NPC ({len(self.event_npc)}个)')
+            for n in self.event_npc.npc_list:
+                print(f'│ {n.name}')
+            print(f'├ 关联NPC ({len(self.related_npc)}个)')
+            for n in self.related_npc.npc_list:
+                print(f'│ {n.name}')
+            print(f'└── 全量NPC: {len(self.all_npc_list)}个 | /context 查看对话 /context event 查看事件')
+
         else:
-            print(f'未知命令：{cmd}  可用：/save /load /saves /quick_save /quick_load')
+            print(f'未知命令：{cmd}  可用：/save /load /saves /quick_save /quick_load /context /npcs')
 
         return 'continue'
