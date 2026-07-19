@@ -19,6 +19,7 @@ class B3NPCLayer:
 
     def __init__(self, dict: dict):
         self.name = dict['名字Name']
+        self.memory = dict['知识记忆Memory']
         self.belief = dict['信念Belief']
         self.personality = dict['性格Personality']
         self.goals = dict['生活目标Goals']
@@ -33,6 +34,7 @@ class B3NPCLayer:
     def to_dict(self) -> dict:
         return {
             '名字Name': self.name,
+            '知识记忆Memory': self.memory,
             '信念Belief': self.belief,
             '性格Personality': self.personality,
             '生活目标Goals': self.goals,

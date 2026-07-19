@@ -117,15 +117,25 @@ while True:
                 )
                 futures[fut] = npc_name
 
+            merged_player_delta = {}  # 所有NPC产出的玩家增量合并到这里
+
             for future in as_completed(futures):
                 npc_name = futures[future]
                 try:
-                    npc_final, response, should_print = future.result()
+                    npc_final, response, should_print, player_delta = future.result()
                     gc.sync_npc_to_lists(npc_final)
                     if should_print:
                         print(f'\n{response}')
+                    # 合并玩家增量
+                    if player_delta:
+                        merge_delta(merged_player_delta, player_delta)
                 except Exception as e:
                     logger.error(f'NPC [{npc_name}] 处理异常：{e}')
+
+        # 将合并后的玩家增量写回玩家实例
+        if merged_player_delta:
+            gc.player.player_dict = apply_player_delta(gc.player.player_dict, merged_player_delta)
+            logger.info(f'玩家状态已更新：{merged_player_delta}')
 
     # --- 地段传播 ---
     ground_msg = dict_replay.get('地段传播', {})

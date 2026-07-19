@@ -18,6 +18,12 @@ class N4_Update:
         self.cli = LLMClient()
 
     def update_for_npc(self, npc_inst: B3NPCLayer, player_inst: B4PlayerLayer, player_input: str):
+        """
+        :param npc_inst:   NPC 实例
+        :param player_inst: 玩家实例
+        :param player_input: 玩家输入文本
+        :return: (更新后的B3NPCLayer, 玩家增量dict, 客观事实str)
+        """
         with open(os.path.join(BASE_PATH, r'prompt\N4_update_sys'), 'r', encoding='utf-8') as f:
             sys_prompt = f.read()
 
@@ -33,7 +39,12 @@ class N4_Update:
 
         replay = self.cli.chat_by_context(all_context)
         json_replay = safe_json_loads(replay, label='N4')
-        # 提取客观事实后再构建NPC实例
+
         objective_facts = json_replay.pop('客观事实ObjectiveFacts', '无')
-        new_npc_inst = B3NPCLayer(json_replay)
-        return new_npc_inst, objective_facts
+        npc_delta = json_replay.get('npc实例', {})
+        player_delta = json_replay.get('玩家实例', {})
+
+        # 增量模式：只更新有变更的字段
+        new_npc_inst = apply_npc_delta(npc_inst, npc_delta)
+
+        return new_npc_inst, player_delta, objective_facts

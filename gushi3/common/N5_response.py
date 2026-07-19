@@ -47,5 +47,8 @@ class N5_Response():
 
         json_replay = safe_json_loads(reply, label='N5')
         response_text = json_replay.pop('响应Response', '')
-        new_npc_inst = B3NPCLayer(json_replay)
+        npc_delta = json_replay.get('npc实例', {})
+
+        # 增量模式：只更新主观微调字段
+        new_npc_inst = apply_npc_delta(npc_inst, npc_delta)
         return new_npc_inst, response_text.strip()

@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from copy import deepcopy
 from typing import Dict, Any, List
 
 from Schema.B1_worldState_sch import B1WorldLayer
@@ -43,6 +44,108 @@ def safe_json_loads(text: str, label: str = "") -> dict:
         logger.error(f'safe_json_loads[{label}] 解析失败: {e}')
         logger.error(f'safe_json_loads[{label}] 原始文本(前2000字符): {raw[:2000]}')
         raise
+
+
+# ===================== 增量合并工具 =====================
+
+def _apply_dict_delta(base: dict, delta: dict):
+    """
+    将一个增量 delta 原地应用到 base 字典上。
+
+    delta 结构：{"增加": {字段名: 值}, "删减": {字段名: 值}}
+    - list 字段：增加→extend，删减→逐条移除
+    - dict 字段：增加→update合并，删减→逐key删除
+    - 其他(如str)：增加→覆盖
+    """
+    for section_key, (section_label, op_func) in _DELTA_OPS.items():
+        section = delta.get(section_key, {})
+        if not section:
+            continue
+        for field, value in section.items():
+            op_func(base, field, value)
+
+
+def _delta_add(base: dict, field: str, value):
+    """增加操作"""
+    existing = base.get(field)
+    if isinstance(value, dict) and isinstance(existing, dict):
+        existing.update(value)
+    elif isinstance(value, list) and isinstance(existing, list):
+        existing.extend(value)
+    else:
+        base[field] = value
+
+
+def _delta_del(base: dict, field: str, value):
+    """删减操作"""
+    existing = base.get(field)
+    if existing is None:
+        return
+    if isinstance(value, dict) and isinstance(existing, dict):
+        for k in value:
+            existing.pop(k, None)
+    elif isinstance(value, list) and isinstance(existing, list):
+        for item in value:
+            if item in existing:
+                existing.remove(item)
+
+
+_DELTA_OPS = {
+    '增加': ('add', _delta_add),
+    '删减': ('del', _delta_del),
+}
+
+
+def apply_npc_delta(npc: B3NPCLayer, delta: dict) -> B3NPCLayer:
+    """
+    将增量 delta 应用到 NPC 实例，返回新的 B3NPCLayer。
+
+    :param npc:   原始 NPC 实例
+    :param delta: {"增加": {...}, "删减": {...}} 或空dict
+    :return: 更新后的 B3NPCLayer
+    """
+    if not delta or (not delta.get('增加') and not delta.get('删减')):
+        return npc
+    npc_dict = npc.to_dict()
+    _apply_dict_delta(npc_dict, delta)
+    return B3NPCLayer(npc_dict)
+
+
+def apply_player_delta(player_dict: dict, delta: dict) -> dict:
+    """
+    将增量 delta 应用到玩家 dict，返回深拷贝后的新 dict。
+
+    :param player_dict: 原始玩家字典
+    :param delta: {"增加": {...}, "删减": {...}}
+    :return: 更新后的玩家字典
+    """
+    if not delta or (not delta.get('增加') and not delta.get('删减')):
+        return player_dict
+    result = deepcopy(player_dict)
+    _apply_dict_delta(result, delta)
+    return result
+
+
+def merge_delta(target: dict, source: dict):
+    """
+    将 source delta 合并到 target delta（原地修改 target）。
+
+    用于多个 NPC 产出的玩家增量合并。
+    """
+    for section_key in ('增加', '删减'):
+        src_section = source.get(section_key, {})
+        if not src_section:
+            continue
+        tgt_section = target.setdefault(section_key, {})
+        for field, value in src_section.items():
+            if field not in tgt_section:
+                tgt_section[field] = deepcopy(value)
+            elif isinstance(tgt_section[field], dict) and isinstance(value, dict):
+                tgt_section[field].update(value)
+            elif isinstance(tgt_section[field], list) and isinstance(value, list):
+                tgt_section[field].extend(value)
+            else:
+                tgt_section[field] = value
 
 
 

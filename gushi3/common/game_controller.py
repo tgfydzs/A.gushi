@@ -107,18 +107,13 @@ class GameController:
         """
         单个NPC的完整 N4→N5 流水线，供 ThreadPoolExecutor 并行调用。
 
-        :param npc_name:   NPC 显示名称
-        :param npc:        NPC 实例（B3NPCLayer）
-        :param should_print: 是否为事件NPC（需要打印回应）
-        :param n4_update:  N4 更新层实例
-        :param n5_response: N5 响应层实例
-        :param player_input: 玩家原始输入文本
-        :return: (npc_final, response, should_print)
+        :return: (npc_final, response, should_print, player_delta)
+                 player_delta = {"增加": {...}, "删减": {...}} 用于合并回玩家实例
         """
         tag = '' if should_print else '（潜在）'
 
         # N4 客观处理（有玩家实例，比对客观事物）
-        npc_obj, facts = n4_update.update_for_npc(npc, self.player, player_input)
+        npc_obj, player_delta, facts = n4_update.update_for_npc(npc, self.player, player_input)
         logger.info(f'[{npc_name}]{tag} 客观事实：{facts}')
 
         # N5 主观处理（无玩家实例，防止隐藏事实暴露）
@@ -128,7 +123,7 @@ class GameController:
         if should_print:
             logger.info(f'[{npc_name}] 回应：{response}')
 
-        return npc_final, response, should_print
+        return npc_final, response, should_print, player_delta
 
     # ===================== 存档 / 读档 =====================
 
