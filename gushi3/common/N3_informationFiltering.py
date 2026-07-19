@@ -62,10 +62,10 @@ class N3_Info_Filtering:
             '玩家当前位置': player.player_dict['当前状态CurrentState']['当前所处位置'] if player else ''
         }
         all_context.append({'role': 'user', 'content': json.dumps(user_input, ensure_ascii=False)})
-        self.logger.info(f'感知层LLM_messages：{all_context}')
+        self.logger.debug(f'感知层LLM_messages：{all_context}')
 
         replay = self.cli.chat_by_context(all_context)
-        json_replay = json.loads(replay)
+        json_replay = safe_json_loads(replay, label='N3')
         return json_replay
 
 

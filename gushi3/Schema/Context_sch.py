@@ -11,9 +11,13 @@ class ContextHistory:
     """
     创建上下文，实际是对话记录，内部为列表，即：["对话轮次号 | 时间 | 发言人：说的话", ...]
     """
-    def __init__(self):
-        self.context = [] #上下文，列表内部存储str。"对话轮次号 | 时间 | 发言人：说的话"
-        self.count = 0 #对话轮次计数
+    def __init__(self, context=None, count=0):
+        if context is not None:
+            self.context = context
+            self.count = count
+        else:
+            self.context = [] #上下文，列表内部存储str。"对话轮次号 | 时间 | 发言人：说的话"
+            self.count = 0 #对话轮次计数
 
 
     def add_context(self, context):

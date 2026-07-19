@@ -16,6 +16,9 @@ NPC_DATA_ROOT_PATH = r'data\B3_npc'
 
 PLAYER_DATA_FILE = r'data\player\陈闲.json'
 
+SAVE_ROOT_PATH = r'save'    # 存档根目录
+SAVE_VERSION = 1              # 存档格式版本号，Schema 变更时递增
+
 
 
 # ---------------- ai配置 --------------------------

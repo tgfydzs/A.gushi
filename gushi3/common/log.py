@@ -252,6 +252,11 @@ def set_console_level(score: int):
     _engine.set_console_level(score)
 
 
+def get_log_path() -> str:
+    """返回当前日志文件的绝对路径"""
+    return _engine.log_path
+
+
 def close():
     """关闭日志文件（程序退出前可选调用）"""
     _engine.close()

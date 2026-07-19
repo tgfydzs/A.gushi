@@ -1,10 +1,10 @@
 # NPC层数据结构，使用、创建、注意点
 ## NPC数据文件使用json格式
-### 包含字段：知识记忆Memory，信念Belief， 性格Personality， 生活目标Goals， 好感度Relationship， 当前状态CurrentState， 观察Observation， 持有物Inventory， 待解释事件PendingReasoning， 表更新成本UpdateCost
+### 包含字段：知识记忆Memory，信念Belief， 性格Personality， 生活目标Goals， 好感度Relationship， 当前状态CurrentState， 观察Observation， 对玩家观察PlayerObservation， 持有物Inventory， 待解释事件PendingReasoning， 表更新成本UpdateCost
 ### 示例：
     [
         {
-            "名字Name": "李世民",
+            "名字Name": "",
             "知识记忆Memory": [],
             "信念Belief": [],
             "性格Personality": [],
@@ -12,6 +12,7 @@
             "好感度Relationship": [],
             "当前状态CurrentState": [],
             "观察Observation": [],
+            "对玩家观察PlayerObservation": [],
             "持有物Inventory": {},
             "待解释事件PendingReasoning": [],
             "表更新成本UpdateCost": []
@@ -23,6 +24,19 @@
 ## 任意数据源不做枚举限制，也不做格式限制，用文本标记即可，保持灵活度
 ## npc数量众多，因此嵌套一层目录（分组），内部一个json文件（细分组）装一组npc，根目录下不读取文件，读取分组目录下json
 
+## 简述每个字段的作用，可以用于prompt提示词中解释
+    名字Name：每个npc的名字，马甲或者历史上使用的不同身份需要标记（马甲、现用）
+    知识记忆Memory：综合用途，覆盖最广，记录事实、事件、时间点等明确知识
+    信念Belief：NPC所认为的事物、主观认知和看法
+    性格Personality：性格特质及强度（10分制），影响语言风格和行为倾向
+    生活目标Goals：短期/长期目标、欲望、追求，有特殊情况文本言明即可
+    好感度Relationship：对某人/事/物的好感程度（-10~10，0为基准线）
+    当前状态CurrentState：实时快照，必有位置、实力等级、身份，也可存其他当前属性
+    观察Observation：NPC被动接收的环境信息、他人言行
+    对玩家观察PlayerObservation：NPC眼中关于玩家的认知——观察到的实力、玩家主动告知的信息、基于行为的合理推断。每条一句NPC视角客观陈述，以玩家为核心
+    持有物Inventory：以字典存储NPC拥有的物品，key为物品名，value为具体内容
+    待解释事件PendingReasoning：NPC察觉到的疑点、未解之谜，区别于观察的是此处存疑而非确定
+    表更新成本UpdateCost：按表顺序以-10~10标记写入难易度，用于模拟npc的成长或者退化（当前11个表，长度应对应）
 
 
 
@@ -83,6 +97,17 @@
     "观察Observation": ["这里真漂亮", ""]
 
 
+## 对玩家观察PlayerObservation（list）默认为空
+### 用途：专门记录每个NPC眼中所了解的玩家信息，核心是玩家而非NPC自身。每个NPC独立维护自己视角下的玩家画像
+### 记录内容：
+#### 观察到的实力：NPC目击玩家展现的能力、身手、等级
+#### 玩家告知的信息：身份、经历、目的等玩家主动透露的内容
+#### 行为推断：NPC基于观察对玩家阵营、意图的合理判断
+### 每项为一句NPC视角的客观陈述，以玩家为主语
+    "对玩家观察PlayerObservation": ["自称是异常局调查员", "展现了精锐级实力", "携带一把特制电磁手枪", "似乎对黑户觉醒者抱有同情"]
+### 注意：记录的是NPC已确认或合理推断的认知，不是猜测或内心活动。已有条目不要重复追加
+
+
 ## 持有物Inventory（dict）
 ### 用途：模拟时常用的判定来源之一，一般是客观存在的事物
 ### 以字典存有，key为物品名称、统称，value为具体内容
@@ -98,6 +123,6 @@
 ## 表更新成本UpdateCost（list[int]）
 ### 用途：用来模拟npc进步退步、聪明
 ### 原理：列表内按照固定顺序，以-10到10来标记是否更容易写入表，同时也是一个调试参数
-### 注意：当前表数量是10个，如果未来增减，该列表长度应该对应。但后续npc可能有更多表，内部对应即可。
+### 注意：当前表数量是11个，如果未来增减，该列表长度应该对应。但后续npc可能有更多表，内部对应即可。
 
 

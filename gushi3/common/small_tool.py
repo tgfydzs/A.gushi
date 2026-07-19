@@ -11,6 +11,40 @@ from common.log import get_logger
 logger = get_logger("small_tool")
 
 
+def safe_json_loads(text: str, label: str = "") -> dict:
+    """
+    安全解析LLM返回的JSON，处理常见格式问题：
+      1. 剥离 markdown 代码块包裹（```json ... ```）
+      2. 尝试 strict 模式解析
+      3. 降级 strict=False（允许字符串内嵌控制字符如 \\n \\t \\r）
+      4. 仍失败则记录原始文本并抛出
+
+    :param text:  LLM 原始返回文本
+    :param label: 调用方标识，用于日志定位
+    :return: 解析后的 dict
+    """
+    raw = text.strip()
+
+    # 1. 剥离 markdown 代码块
+    m = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', raw, re.DOTALL)
+    if m:
+        raw = m.group(1).strip()
+
+    # 2. 尝试 strict 解析
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. 降级：允许控制字符
+    try:
+        return json.loads(raw, strict=False)
+    except json.JSONDecodeError as e:
+        logger.error(f'safe_json_loads[{label}] 解析失败: {e}')
+        logger.error(f'safe_json_loads[{label}] 原始文本(前2000字符): {raw[:2000]}')
+        raise
+
+
 
 
 def load_json_to_dict(file_path: str) -> Dict[str, Any]:

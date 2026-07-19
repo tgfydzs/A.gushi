@@ -35,10 +35,10 @@ class N2_CE_Process:
         all_context.append({'role': 'system', 'content': sys_prompt})
         context_str = '\n'.join(context_event.context)
         all_context.append({'role': 'user', 'content': context_str})
-        self.logger.info(f'事件判断上下文：\n{all_context}')
+        self.logger.info(f'事件判断上下文：\n{all_context[1]}')
 
         replay = self.cli.chat_by_context(all_context)
-        json_replay = json.loads(replay)
+        json_replay = safe_json_loads(replay, label='N2')
 
         return json_replay
 
