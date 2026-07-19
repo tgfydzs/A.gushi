@@ -150,6 +150,36 @@ def merge_delta(target: dict, source: dict):
 
 
 
+def strip_empty_delta(delta: dict) -> dict:
+    """
+    清理增量中的空值：移除值为空list/空dict/空字符串的字段。
+    用于LLM输出后处理，确保"未变化字段不出现"。
+
+    :param delta: {"增加": {...}, "删减": {...}}
+    :return: 清理后的delta（可能为空dict）
+    """
+    if not delta:
+        return {}
+    cleaned = {}
+    for section_key in ('增加', '删减'):
+        section = delta.get(section_key, {})
+        if not section or not isinstance(section, dict):
+            continue
+        filtered = {}
+        for field, value in section.items():
+            # 空list、空dict、空字符串 → 跳过
+            if isinstance(value, list) and len(value) == 0:
+                continue
+            if isinstance(value, dict) and len(value) == 0:
+                continue
+            if isinstance(value, str) and value == '':
+                continue
+            filtered[field] = value
+        if filtered:
+            cleaned[section_key] = filtered
+    return cleaned
+
+
 def load_json_to_dict(file_path: str) -> Dict[str, Any]:
     """
     读取指定路径的JSON文件，返回解析后的字典
@@ -194,9 +224,32 @@ def walk_category_files(root_folder: str):
 
 
 
-def resolve_move_markers(raw_input: str, world_layer: B1WorldLayer) -> str | None:
+# 移动方式选项列表
+MOVE_METHODS = ['步行', '跑步', '骑电动车', '公共交通', '异能移动']
+
+
+def _select_move_method() -> str | None:
+    """交互式选择移动方式，返回方式名；取消返回 None"""
+    print()
+    print('  选择移动方式：')
+    for i, method in enumerate(MOVE_METHODS, 1):
+        print(f'    [{i}] {method}')
+    print('    [Enter] 步行（默认）')
+    choice = input('  > ').strip()
+    if choice == '':
+        return '步行'
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(MOVE_METHODS):
+            return MOVE_METHODS[idx]
+    except ValueError:
+        pass
+    return '步行'  # 无效输入 → 默认
+
+
+def resolve_move_markers(raw_input: str, world_layer: B1WorldLayer, player=None):
     """
-    扫描玩家输入中的移动标记，触发交互式导航，返回替换后的输入。
+    扫描玩家输入中的移动标记，触发交互式导航和移动方式选择。
 
     触发标记（不区分大小写）：
       - {移动} 或 {move}      → 占位符替换
@@ -206,22 +259,14 @@ def resolve_move_markers(raw_input: str, world_layer: B1WorldLayer) -> str | Non
     处理逻辑：
       1. 检测原始输入是否包含触发标记
       2. 若触发 → 调用 world_layer.navigate_interactive()
-      3. 若导航取消 → 返回 None
-      4. 若导航完成 → 将选中路径替换到标记位置
-
-    替换示例：
-      "我准备去{移动}然后找赵铁手" + 选中"华国·东南沿海市·旧城区·城中村"
-      → "我准备去华国·东南沿海市·旧城区·城中村然后找赵铁手"
-
-      "/move" + 选中"华国·东南沿海市·港口区"
-      → "前往华国·东南沿海市·港口区"
-
-      "/move 找赵铁手聊聊" + 选中"华国·东南沿海市·旧城区·城中村"
-      → "前往华国·东南沿海市·旧城区·城中村，找赵铁手聊聊"
+      3. 若导航取消 → 返回 (None, None)
+      4. 若导航完成 → 选择移动方式 → 将选中路径替换到标记位置
 
     :param raw_input: 玩家原始输入
     :param world_layer: B1WorldLayer 实例
-    :return: 替换后的完整输入；取消时返回 None
+    :param player: B4PlayerLayer 玩家实例（取当前位置作为出发地）
+    :return: (替换后的完整输入, 移动信息dict)；取消时返回 (None, None)
+             移动信息格式：{"from": str, "to": str, "method": str}
     """
 
     # 模式1：{移动} 或 {move} 占位符
@@ -230,9 +275,12 @@ def resolve_move_markers(raw_input: str, world_layer: B1WorldLayer) -> str | Non
         print('\n--- 选择目标位置 ---')
         selected = world_layer.navigate_interactive()
         if selected is None:
-            return None
+            return (None, None)
+        method = _select_move_method()
+        from_loc = player.player_dict.get('当前状态CurrentState', {}).get('当前所处位置', '') if player else ''
         result = raw_input[:placeholder_match.start()] + selected + raw_input[placeholder_match.end():]
-        return result
+        move_info = {'from': from_loc, 'to': selected, 'method': method}
+        return (result, move_info)
 
     # 模式2：/move 命令（独立或带后续内容）
     cmd_match = re.match(r'^/move\s*(.*)', raw_input, re.IGNORECASE)
@@ -241,15 +289,18 @@ def resolve_move_markers(raw_input: str, world_layer: B1WorldLayer) -> str | Non
         print('\n--- 选择目标位置 ---')
         selected = world_layer.navigate_interactive()
         if selected is None:
-            return None
+            return (None, None)
+        method = _select_move_method()
+        from_loc = player.player_dict.get('当前状态CurrentState', {}).get('当前所处位置', '') if player else ''
         if suffix:
             result = f'前往{selected}，{suffix}'
         else:
             result = f'前往{selected}'
-        return result
+        move_info = {'from': from_loc, 'to': selected, 'method': method}
+        return (result, move_info)
 
-    # 无标记 → 原样返回
-    return raw_input
+    # 无标记 → 原样返回，无移动信息
+    return (raw_input, None)
 
 
 def load_npc_list_from_json(file_path: str) -> B3NPCListLayer:

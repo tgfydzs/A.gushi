@@ -1,0 +1,174 @@
+flowchart TB
+    %% =========================================
+    %% gushi3 流程图 —— 基于实际代码整理
+    %% 标注：[x] = 已实现  [ ] = 未实现
+    %% =========================================
+
+    %% ===================== N1 玩家输入 =====================
+    subgraph N1[N1 玩家输入层 ✅]
+        direction TB
+        n1_input(玩家输入 raw_input) --> n1_cmd{命令判断}
+        n1_cmd -- /save /load /saves /quick等 --> n1_cmd_exec[命令处理 GameController.handle_command]
+        n1_cmd -- !! --> n1_undo[撤回上一条 snapshot恢复]
+        n1_cmd -- 正常输入 --> n1_move{移动标记检测}
+        n1_move -- 含 /move 或 {移动} --> n1_nav[交互式地点导航 B1WorldLayer.navigate_interactive]
+        n1_move -- 无标记 --> n1_done(玩家输入文本)
+        n1_nav --> n1_done
+    end
+
+    %% ===================== 数据层 =====================
+    subgraph DATA[数据层 ✅]
+        direction LR
+        data_player[玩家 B4PlayerLayer<br/>名称/当前状态/持有物/描述]
+        data_world[世界层 B1WorldLayer<br/>规则/状态/演变规则/知识/地点树]
+        data_npc[全量NPC B3NPCListLayer<br/>从data/B3_npc按势力分组加载]
+    end
+
+    %% ===================== NPC 10表结构 =====================
+    subgraph NPC_TABLES[NPC 10张表 ✅]
+        direction LR
+        tb_memory[知识记忆<br/>Memory list]
+        tb_belief[信念<br/>Belief list]
+        tb_personality[性格<br/>Personality list]
+        tb_goals[生活目标<br/>Goals list]
+        tb_relation[好感度<br/>Relationship list]
+        tb_state[当前状态<br/>CurrentState dict]
+        tb_observation[观察<br/>Observation list]
+        tb_playerObs[对玩家观察<br/>PlayerObservation list]
+        tb_inventory[持有物<br/>Inventory dict]
+        tb_pending[待解释事件<br/>PendingReasoning list]
+        tb_cost[表更新成本<br/>UpdateCost list]
+    end
+
+    %% ===================== N2 事件层 =====================
+    subgraph N2[N2 事件层 ✅]
+        direction TB
+        n2_ctx[事件上下文 ContextHistory<br/>记录事件范围内的对话轮次]
+        n2_judge{LLM判断<br/>prompt/N2_contextRetrieval_sys.txt}
+        n2_new{is_new_event?}
+        n2_yes(新事件 → 清空事件上下文<br/>重置event_context)
+        n2_no(延续事件 → 保留上下文)
+        n2_npc[维护 NPC 列表<br/>增删 event_npc / related_npc]
+    end
+
+    %% ===================== N3 感知层 =====================
+    subgraph N3[N3 感知层 ✅]
+        direction TB
+        n3_input[输入：事件上下文 + 事件NPC列表 + 潜在NPC列表 + 玩家位置]
+        n3_llm{LLM判断<br/>prompt/N3_informationFiltering_sys.txt}
+        n3_event[事件涉及的npc<br/>感知消息字典]
+        n3_related[事件涉及/潜在npc<br/>感知消息字典]
+        n3_ground[地段传播<br/>msg + level + mask]
+    end
+
+    %% ===================== N4+N5 并行流水线 =====================
+    subgraph N4N5[N4+N5 NPC并行处理 ✅ ThreadPoolExecutor max_workers=6]
+        direction TB
+        n4n5_tasks[收集tasks：event_npc + related_npc<br/>每个task = 名称+实例+是否打印+感知消息]
+        n4n5_parallel{并行执行}
+
+        subgraph N4[N4 更新层 客观 ✅]
+            direction TB
+            n4_llm{LLM处理<br/>prompt/N4_update_sys}
+            n4_out[(输出：增量npc实例 + 玩家增量 + 客观事实)]
+        end
+
+        subgraph N5[N5 响应层 主观 ✅]
+            direction TB
+            n5_llm{LLM处理<br/>prompt/N5_response_sys<br/>❌不接受玩家实例}
+            n5_out[(输出：增量npc实例 + 回应文本)]
+        end
+
+        n4n5_parallel --> n4_llm
+        n4_out --> n5_llm
+        n5_out --> n4n5_merge[合并玩家增量<br/>merge_delta + apply_player_delta]
+    end
+
+    %% ===================== 地段传播 =====================
+    subgraph GROUND[地段传播 ✅]
+        direction TB
+        ground_write[地段消息写入<br/>同时加入 global_context 和 event_context]
+    end
+
+    %% ===================== 可用的 ✅ 但未在主线中系统化调用 =====================
+    subgraph CONTEXT[上下文系统 ✅]
+        direction LR
+        ctx_global[全局上下文 global_context<br/>NPC回应/旁白等 供玩家查看]
+        ctx_event[事件上下文 event_context<br/>仅事件范围内的对话 供AI处理]
+    end
+
+    %% ===================== 主流程连线 =====================
+    n1_done -- 写入上下文 --> N2
+    DATA --> N2
+    N2 --> n3_input
+    n3_input --> n3_llm
+    n3_llm --> n3_event & n3_related & n3_ground
+    n3_event & n3_related --> n4n5_tasks
+    n4n5_merge --> n4n5_sync[NPC同步到列表<br/>sync_npc_to_lists]
+    n4n5_sync --> ground_write
+    n3_ground --> ground_write
+    ground_write --> nxt(下一轮循环)
+
+    %% ===================== 以下：流程图.mmd 设计但 gushi3 未实现 =====================
+
+    subgraph TODO[❌ 未实现的功能]
+        direction TB
+
+        subgraph TODO1[玩家行为层 未实现]
+            tx1[玩家意图/交互/库存/攻击<br/>仅在player_dict中有字段<br/>无独立的N1行为解析层]
+        end
+
+        subgraph TODO2[推理层 N6 未实现]
+            tx2[检查待解释事件 PendingReasoning<br/>→ LLM推理 → 解答/更新<br/>NPC主动提问也依赖此层]
+        end
+
+        subgraph TODO3[信息传播层 未实现]
+            tx3[NPC之间信息传播<br/>策略判断 传播给谁<br/>演变任务]
+        end
+
+        subgraph TODO4[导演层 未实现]
+            tx4[NPC说话/旁白分离输出<br/>导演样式控制<br/>世界状态/NPC主动提问调度]
+        end
+
+        subgraph TODO5[世界演变层 未实现]
+            tx5[时间戳标记<br/>定时扩大/关闭事件<br/>规则演变触发]
+        end
+
+        subgraph TODO6[权限层 未实现]
+            tx6[传播当前事件权限判断<br/>谁有权知道什么]
+        end
+
+        subgraph TODO7[NPC主动提问 未实现]
+            tx7[LLM判断NPC是否有主动提问<br/>→ 触发导演层]
+        end
+    end
+
+    %% 存档系统
+    subgraph SAVE[存档系统 ✅ SaveManager]
+        direction LR
+        sv_save[存档：8个JSON分散文件]
+        sv_load[读档：重建全部运行时状态]
+        sv_quick[快速存取 quick_save/quick_load]
+    end
+
+
+    %% ====== 数据流总结 ======
+    style N1 fill:#e1f5e1
+    style N2 fill:#e1f5e1
+    style N3 fill:#e1f5e1
+    style N4 fill:#e1f5e1
+    style N5 fill:#e1f5e1
+    style GROUND fill:#e1f5e1
+    style DATA fill:#e1f5e1
+    style NPC_TABLES fill:#e1f5e1
+    style CONTEXT fill:#e1f5e1
+    style SAVE fill:#e1f5e1
+
+    style TODO fill:#fff3f3
+    style TODO1 fill:#fff3f3
+    style TODO2 fill:#fff3f3
+    style TODO3 fill:#fff3f3
+    style TODO4 fill:#fff3f3
+    style TODO5 fill:#fff3f3
+    style TODO6 fill:#fff3f3
+    style TODO7 fill:#fff3f3

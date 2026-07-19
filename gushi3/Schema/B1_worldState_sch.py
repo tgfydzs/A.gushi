@@ -15,6 +15,12 @@ class B1WorldLayer:
     def __init__(self, world_dict: dict):
         self.dict = world_dict
 
+    # ===================== 世界配置读取 =====================
+
+    def get_start_time(self) -> str:
+        """读取游戏开始时间，默认 2026-07-19 18:00"""
+        return self.dict.get('游戏开始时间', '2026-07-19 18:00')
+
     # ===================== 位置查询与路径工具 =====================
 
     def get_location_tree(self) -> dict:
@@ -222,6 +228,47 @@ class B1WorldLayer:
                     except ValueError:
                         pass
                 print('无效选项，请重新输入')
+
+    # ===================== 位置距离计算 =====================
+
+    def location_depth(self, path_str: str) -> int:
+        """
+        计算位置在树中的深度（段数）。
+        "华国·东南沿海市·旧城区·街边炒粉摊" → 4
+        """
+        return len(self.parse_path(path_str))
+
+    def location_distance(self, from_path_str: str, to_path_str: str) -> int:
+        """
+        计算两个位置的最短路径段数。
+
+        算法：找LCA（最近公共祖先），距离 = (a深度 - lca深度) + (b深度 - lca深度)
+
+        例：街边炒粉摊 → 废弃造船厂 = 4段
+            from: 华国·东南沿海市·旧城区·街边炒粉摊  (深度4)
+            to:   华国·东南沿海市·港口区·废弃造船厂   (深度4)
+            LCA:  华国·东南沿海市                      (深度2)
+            距离 = (4-2) + (4-2) = 4 段
+
+        :param from_path_str: 出发地完整路径字符串
+        :param to_path_str:   目的地完整路径字符串
+        :return: 路径段数（≥1）；两地相同返回0
+        """
+        a = self.parse_path(from_path_str)
+        b = self.parse_path(to_path_str)
+
+        if not a or not b:
+            return max(len(a), len(b))
+
+        # 找公共前缀长度
+        common = 0
+        for seg_a, seg_b in zip(a, b):
+            if seg_a == seg_b:
+                common += 1
+            else:
+                break
+
+        return (len(a) - common) + (len(b) - common)
 
     # ===================== 位置NPC查找 =====================
 

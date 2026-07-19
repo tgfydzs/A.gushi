@@ -64,7 +64,7 @@ class N3_Info_Filtering:
         all_context.append({'role': 'user', 'content': json.dumps(user_input, ensure_ascii=False)})
         self.logger.debug(f'感知层LLM_messages：{all_context}')
 
-        replay = self.cli.chat_by_context(all_context)
+        replay = self.cli.chat_by_context(all_context, label='N3')
         json_replay = safe_json_loads(replay, label='N3')
         return json_replay
 

@@ -86,10 +86,11 @@ class LLMClient:
             return f"请求失败：{str(e)}"
 
 
-    def chat_by_context(self, context: list):
+    def chat_by_context(self, context: list, label: str = ''):
         """
         上下文由外部维护，最新消息放到列表最后
         :param context: 上下文列表，例：[{"role": "system", "content": use_sys}, ...]
+        :param label: 调用方标识，如 N2/N3/N4/N5/N6，用于日志
         :return:
         """
         payload = {
@@ -97,6 +98,7 @@ class LLMClient:
             'messages': context
         }
         t0 = time.time()
+        tag = f' [{label}]' if label else ''
         try:
             resp = requests.post(
                 url=self.base_url,
@@ -105,14 +107,14 @@ class LLMClient:
                 timeout=90
             )
             elapsed = time.time() - t0
-            _llm_log.info(f"chat_by_context({self.model_name}) 请求完成，耗时 {elapsed:.1f}s")
+            _llm_log.info(f"chat_by_context({self.model_name}){tag} 请求完成，耗时 {elapsed:.1f}s")
             resp.raise_for_status()
             res_data = resp.json()
             reply = res_data["choices"][0]["message"]["content"].strip()
             return reply
         except Exception as e:
             elapsed = time.time() - t0
-            _llm_log.error(f"chat_by_context 请求失败(耗时{elapsed:.1f}s)：{str(e)}")
+            _llm_log.error(f"chat_by_context({self.model_name}){tag} 请求失败(耗时{elapsed:.1f}s)：{str(e)}")
             return f'请求失败{str(e)}'
 
 

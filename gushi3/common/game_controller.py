@@ -12,6 +12,7 @@ from common.save_load import SaveManager
 from common.base_cnf import BASE_PATH, SAVE_ROOT_PATH, SAVE_VERSION, WORLD_DATA_FILE, WORLD_DATA_SELECT, NPC_DATA_ROOT_PATH, PLAYER_DATA_FILE
 from common.small_tool import load_json_to_dict, walk_category_files, load_npc_list_from_json
 from common import time_int
+from common.game_clock import GameClock
 
 from Schema.Context_sch import ContextHistory
 from Schema.B3_npclist_sch import B3NPCListLayer
@@ -42,9 +43,12 @@ class GameController:
     def __init__(self, session_id: str = "default"):
         self.save_manager = SaveManager()
 
-        # ---- 上下文 ----
-        self.global_context = ContextHistory()
-        self.event_context = ContextHistory()
+        # ---- 游戏时钟 ----
+        self.game_clock: GameClock = None
+
+        # ---- 上下文（时钟注入后才创建）----
+        self.global_context: ContextHistory = None
+        self.event_context: ContextHistory = None
 
         # ---- NPC 列表 ----
         self.event_npc = B3NPCListLayer()
@@ -62,6 +66,14 @@ class GameController:
         world_data = load_json_to_dict(os.path.join(BASE_PATH, WORLD_DATA_FILE))
         self.b1WorldLayer = B1WorldLayer(world_data[WORLD_DATA_SELECT])
         logger.debug(f'世界数据：{self.b1WorldLayer.dict}')
+
+    def init_clock(self):
+        """从世界规则读取起始时间，创建游戏时钟和上下文对象"""
+        start_time = self.b1WorldLayer.get_start_time()
+        self.game_clock = GameClock(start_time_str=start_time)
+        self.global_context = ContextHistory(game_clock=self.game_clock)
+        self.event_context = ContextHistory(game_clock=self.game_clock)
+        logger.info(f'⏰ 游戏时钟启动 → {start_time}')
 
     def init_all_npcs(self):
         """从 data/B3_npc 加载所有NPC"""
@@ -101,12 +113,14 @@ class GameController:
             'all_npc_list': deepcopy(self.all_npc_list.npc_list),
             'player': deepcopy(self.player.player_dict),
             'world': deepcopy(self.b1WorldLayer.dict),
+            'game_clock': deepcopy(self.game_clock.to_dict()),
         }
 
     def restore(self, snap: dict):
         """从 snapshot() 产出的快照全量恢复运行时状态。"""
-        self.global_context = ContextHistory(snap['global_context'][0], snap['global_context'][1])
-        self.event_context = ContextHistory(snap['event_context'][0], snap['event_context'][1])
+        self.game_clock = GameClock.from_dict(snap['game_clock'])
+        self.global_context = ContextHistory(snap['global_context'][0], snap['global_context'][1], game_clock=self.game_clock)
+        self.event_context = ContextHistory(snap['event_context'][0], snap['event_context'][1], game_clock=self.game_clock)
         self.event_npc = B3NPCListLayer()
         for n in snap['event_npc']:
             self.event_npc.add(n)
@@ -136,27 +150,35 @@ class GameController:
     # ===================== NPC 流水线 =====================
 
     def process_npc_pipeline(self, npc_name: str, npc: B3NPCLayer, should_print: bool,
-                             n4_update, n5_response, perception_msg: str):
+                             n4_reasoning, n5_response, n6_update, perception_msg: str):
         """
-        单个NPC的完整 N4→N5 流水线，供 ThreadPoolExecutor 并行调用。
+        单个NPC的完整 N4→N5→N6 流水线，供 ThreadPoolExecutor 并行调用。
+
+        流水线：N4（推理）→ N5（回应）→ N6（收尾）
 
         :param perception_msg: N3感知层分发的带方向消息（"玩家对你说：..."或"玩家对[名字]说：..."）
         :return: (npc_final, response, should_print, player_delta)
         """
         tag = '' if should_print else '（潜在）'
 
-        # N4 客观处理（有玩家实例，比对客观事物）
-        npc_obj, player_delta, facts = n4_update.update_for_npc(npc, self.player, perception_msg)
-        logger.info(f'[{npc_name}]{tag} 客观事实：{facts}')
+        # N4 推理层（不接受玩家实例，更新待解释事件表）
+        npc_after_reasoning = n4_reasoning.reason_for_npc(npc, perception_msg)
+        logger.info(f'[{npc_name}]{tag} 推理完成')
 
-        # N5 主观处理（无玩家实例，防止隐藏事实暴露）
-        npc_final, response = n5_response.response_say(
-            npc_obj, perception_msg, self.global_context.context, facts
+        # N5 回应层（不接受玩家实例，不修改NPC实例，仅产出回应+内心想法）
+        response_text, inner_thought = n5_response.response_say(
+            npc_after_reasoning, perception_msg, self.global_context.context
         )
         if should_print:
-            logger.info(f'[{npc_name}] 回应：{response}')
+            logger.info(f'[{npc_name}] 回应：{response_text}')
+        logger.info(f'[{npc_name}]{tag} 内心想法：{inner_thought}')
 
-        return npc_final, response, should_print, player_delta
+        # N6 更新层（唯一接受玩家实例的层，收尾落实所有客观操作）
+        npc_final, player_delta = n6_update.update_for_npc(
+            npc_after_reasoning, self.player, perception_msg, inner_thought
+        )
+
+        return npc_final, response_text, should_print, player_delta
 
     # ===================== 存档 / 读档 =====================
 
@@ -167,6 +189,7 @@ class GameController:
                 "save_name": name,
                 "version": SAVE_VERSION,
                 "timestamp": time_int.ts_to_readable(time_int.get_minute_ts()),
+                "game_time": self.game_clock.now_str(),
                 "player_name": self.player.player_dict.get("玩家名称name", "未知"),
                 "location": self.player.player_dict.get("当前状态CurrentState", {}).get("当前所处位置", "未知"),
                 "round_count": self.global_context.count,
@@ -185,17 +208,22 @@ class GameController:
             "all_npc_list": self.all_npc_list.to_dict(),
             "player_dict": self.player.player_dict,
             "world_dict": self.b1WorldLayer.dict,
+            "game_clock": self.game_clock.to_dict(),
         }
 
     def rebuild_game_state(self, save_dict: dict):
         """从存档字典重建 self 的全部运行时状态"""
+        # 时钟先恢复（上下文需要它）
+        self.game_clock = GameClock.from_dict(save_dict.get("game_clock", {}))
         self.global_context = ContextHistory(
             context=save_dict["global_context"]["context"],
             count=save_dict["global_context"]["count"],
+            game_clock=self.game_clock,
         )
         self.event_context = ContextHistory(
             context=save_dict["event_context"]["context"],
             count=save_dict["event_context"]["count"],
+            game_clock=self.game_clock,
         )
 
         def _rebuild_npc_list(npc_dicts: list) -> B3NPCListLayer:
