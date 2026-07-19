@@ -184,7 +184,8 @@ class N8_Time:
             reply = self.cli.chat_by_context(all_context, label='N8')
             result = safe_json_loads(reply, label='N8')
             minutes = int(result.get('elapsed_minutes', minutes_since_prev))
-            minutes = max(1, min(minutes, 120))
+            # 玩家可能描述长时间行为（打坐修炼、长途跋涉等），不设上限
+            minutes = max(1, minutes)
         except Exception:
             self.logger.warn('N8 LLM估算失败，回退默认值')
             minutes = minutes_since_prev

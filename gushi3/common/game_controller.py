@@ -49,6 +49,7 @@ class GameController:
         # ---- 上下文（时钟注入后才创建）----
         self.global_context: ContextHistory = None
         self.event_context: ContextHistory = None
+        self.director_context: ContextHistory = None  # N9内部上下文，不向玩家暴露
 
         # ---- NPC 列表 ----
         self.event_npc = B3NPCListLayer()
@@ -68,12 +69,14 @@ class GameController:
         logger.debug(f'世界数据：{self.b1WorldLayer.dict}')
 
     def init_clock(self):
-        """从世界规则读取起始时间，创建游戏时钟和上下文对象"""
+        """从世界规则读取起始时间和时间格式，创建游戏时钟和上下文对象"""
         start_time = self.b1WorldLayer.get_start_time()
-        self.game_clock = GameClock(start_time_str=start_time)
+        time_fmt = self.b1WorldLayer.dict.get('时间格式', 'auto')
+        self.game_clock = GameClock(start_time_str=start_time, time_format=time_fmt)
         self.global_context = ContextHistory(game_clock=self.game_clock)
         self.event_context = ContextHistory(game_clock=self.game_clock)
-        logger.info(f'⏰ 游戏时钟启动 → {start_time}')
+        self.director_context = ContextHistory(game_clock=self.game_clock)
+        logger.info(f'⏰ 游戏时钟启动 → {start_time}（格式：{time_fmt}）')
 
     def init_all_npcs(self):
         """从 data/B3_npc 加载所有NPC"""
@@ -103,11 +106,16 @@ class GameController:
         """仅写入全局上下文（NPC回应等仅供玩家查看的内容，不给AI处理）"""
         self.global_context.add_context(text)
 
+    def add_director_context(self, text: str):
+        """写入导演上下文（N9产出的幕后信息，仅供LLM层全局评估，不向玩家暴露）"""
+        self.director_context.add_context(text)
+
     def snapshot(self) -> dict:
         """返回当前全部运行时状态的深拷贝快照，供 `!!` 回滚使用。"""
         return {
             'global_context': (deepcopy(self.global_context.context), self.global_context.count),
             'event_context': (deepcopy(self.event_context.context), self.event_context.count),
+            'director_context': (deepcopy(self.director_context.context), self.director_context.count),
             'event_npc': deepcopy(self.event_npc.npc_list),
             'related_npc': deepcopy(self.related_npc.npc_list),
             'all_npc_list': deepcopy(self.all_npc_list.npc_list),
@@ -121,6 +129,7 @@ class GameController:
         self.game_clock = GameClock.from_dict(snap['game_clock'])
         self.global_context = ContextHistory(snap['global_context'][0], snap['global_context'][1], game_clock=self.game_clock)
         self.event_context = ContextHistory(snap['event_context'][0], snap['event_context'][1], game_clock=self.game_clock)
+        self.director_context = ContextHistory(snap['director_context'][0], snap['director_context'][1], game_clock=self.game_clock)
         self.event_npc = B3NPCListLayer()
         for n in snap['event_npc']:
             self.event_npc.add(n)
@@ -157,7 +166,7 @@ class GameController:
         流水线：N4（推理）→ N5（回应）→ N6（收尾）
 
         :param perception_msg: N3感知层分发的带方向消息（"玩家对你说：..."或"玩家对[名字]说：..."）
-        :return: (npc_final, response, should_print, player_delta)
+        :return: (npc_final, response, should_print, player_delta, narration)
         """
         tag = '' if should_print else '（潜在）'
 
@@ -174,11 +183,11 @@ class GameController:
         logger.info(f'[{npc_name}]{tag} 内心想法：{inner_thought}')
 
         # N6 更新层（唯一接受玩家实例的层，收尾落实所有客观操作）
-        npc_final, player_delta = n6_update.update_for_npc(
+        npc_final, player_delta, narration = n6_update.update_for_npc(
             npc_after_reasoning, self.player, perception_msg, inner_thought
         )
 
-        return npc_final, response_text, should_print, player_delta
+        return npc_final, response_text, should_print, player_delta, narration
 
     # ===================== 存档 / 读档 =====================
 
@@ -203,12 +212,17 @@ class GameController:
                 "count": self.event_context.count,
                 "context": self.event_context.context,
             },
+            "director_context": {
+                "count": self.director_context.count,
+                "context": self.director_context.context,
+            },
             "event_npc_list": self.event_npc.to_dict(),
             "related_npc_list": self.related_npc.to_dict(),
             "all_npc_list": self.all_npc_list.to_dict(),
             "player_dict": self.player.player_dict,
             "world_dict": self.b1WorldLayer.dict,
             "game_clock": self.game_clock.to_dict(),
+            "n9_director_state": getattr(self, '_n9_state', {}),
         }
 
     def rebuild_game_state(self, save_dict: dict):
@@ -225,6 +239,11 @@ class GameController:
             count=save_dict["event_context"]["count"],
             game_clock=self.game_clock,
         )
+        self.director_context = ContextHistory(
+            context=save_dict["director_context"]["context"],
+            count=save_dict["director_context"]["count"],
+            game_clock=self.game_clock,
+        )
 
         def _rebuild_npc_list(npc_dicts: list) -> B3NPCListLayer:
             lst = B3NPCListLayer()
@@ -238,6 +257,9 @@ class GameController:
 
         self.player = B4PlayerLayer(save_dict["player_dict"])
         self.b1WorldLayer = B1WorldLayer(save_dict["world_dict"])
+
+        # N9 导演层状态（由主循环在 load 后取回使用）
+        self._n9_state = save_dict.get("n9_director_state", {})
 
     # ===================== 存档辅助 =====================
 
@@ -342,6 +364,9 @@ class GameController:
             if which == 'event':
                 ctx = self.event_context
                 label = f'事件上下文（{ctx.count}轮）'
+            elif which == 'director':
+                ctx = self.director_context
+                label = f'导演上下文（{ctx.count}轮 · 仅LLM可见）'
             else:
                 ctx = self.global_context
                 label = f'全局上下文（{ctx.count}轮）'
@@ -360,9 +385,62 @@ class GameController:
             print(f'├ 关联NPC ({len(self.related_npc)}个)')
             for n in self.related_npc.npc_list:
                 print(f'│ {n.name}')
-            print(f'└── 全量NPC: {len(self.all_npc_list)}个 | /context 查看对话 /context event 查看事件')
+            print(f'└── 全量NPC: {len(self.all_npc_list)}个 | /context 对话 /context event 事件 /context director 幕后')
+
+        elif cmd == '/player':
+            which = arg.lower() if arg else 'overview'
+            state = self.player.player_dict.get('当前状态CurrentState', {})
+            inv = self.player.player_dict.get('持有物Inventory', {})
+            descs = self.player.player_dict.get('描述Description', [])
+
+            if which in ('inv', 'inventory', 'bag'):
+                # 持有物
+                print(f'┌ 🎒 持有物')
+                if inv:
+                    for k, v in inv.items():
+                        print(f'│ · {k}：{v}')
+                else:
+                    print('│ (空)')
+                print(f'└── 共 {len(inv)} 件')
+            elif which in ('desc', 'description'):
+                # 描述
+                print(f'┌ 📋 人物描述')
+                if descs:
+                    for i, d in enumerate(descs, 1):
+                        print(f'│ [{i}] {d}')
+                else:
+                    print('│ (空)')
+                print(f'└── 共 {len(descs)} 条')
+            elif which in ('all', 'full'):
+                # 全部信息
+                print(f'┌ 👤 {self.player.player_dict.get("玩家名称name", "未知")}')
+                print(f'│')
+                print(f'│ 📍 位置：{state.get("当前所处位置", "未知")}')
+                print(f'│ ⚡ 实力：{state.get("实力等级", "未知")}')
+                print(f'│ 🪪 身份：{state.get("当前身份", "未知")}')
+                print(f'│')
+                if inv:
+                    print(f'│ 🎒 持有物：')
+                    for k, v in inv.items():
+                        print(f'│   · {k}：{v}')
+                else:
+                    print(f'│ 🎒 持有物：(空)')
+                print(f'│')
+                if descs:
+                    print(f'│ 📋 描述：')
+                    for d in descs:
+                        print(f'│   · {d}')
+                print(f'└── 可简略查看：/player | /player inv | /player desc')
+            else:
+                # 默认：概览
+                print(f'┌ 👤 {self.player.player_dict.get("玩家名称name", "未知")}')
+                print(f'│ 📍 {state.get("当前所处位置", "未知")}')
+                print(f'│ ⚡ {state.get("实力等级", "未知")}')
+                print(f'│ 🪪 {state.get("当前身份", "未知")}')
+                print(f'│ 🎒 持有物 {len(inv)} 件 | 📋 描述 {len(descs)} 条')
+                print(f'└── /player inv 查看持有物 | /player desc 查看描述 | /player all 全部')
 
         else:
-            print(f'未知命令：{cmd}  可用：/save /load /saves /quick_save /quick_load /context /npcs')
+            print(f'未知命令：{cmd}  可用：/save /load /saves /quick_save /quick_load /context /npcs /player')
 
         return 'continue'

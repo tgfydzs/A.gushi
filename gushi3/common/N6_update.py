@@ -33,7 +33,7 @@ class N6_Update:
         :param player_inst: 玩家实例
         :param perception_msg: N3感知层分发的带方向消息
         :param inner_thought: N5回应层产出的内心想法
-        :return: (更新后的B3NPCLayer, 玩家增量dict)
+        :return: (更新后的B3NPCLayer, 玩家增量dict, 旁白list)
         """
         with open(os.path.join(BASE_PATH, r'prompt\N6_update_sys.txt'), 'r', encoding='utf-8') as f:
             sys_prompt = f.read()
@@ -55,8 +55,52 @@ class N6_Update:
         npc_delta = strip_empty_delta(json_replay.get('npc实例', {}))
         player_delta = strip_empty_delta(json_replay.get('玩家实例', {}))
 
-        self.logger.info(f'更新结果：npc_delta={npc_delta} player_delta={player_delta}')
+        narration = json_replay.get('旁白', []) or []
+
+        self.logger.info(f'更新结果：npc_delta={npc_delta} player_delta={player_delta} 旁白={narration}')
 
         new_npc_inst = apply_npc_delta(npc_inst, npc_delta)
 
-        return new_npc_inst, player_delta
+        return new_npc_inst, player_delta, narration
+
+    # ===================== 玩家自主行动 =====================
+
+    def process_player_action(self, player_inst, player_input: str,
+                               elapsed_minutes: int, game_time_str: str = '') -> tuple:
+        """
+        处理玩家自主行动（无NPC参与时）。
+
+        独处修炼、赶路、探索等行为——玩家状态变化 + 客观旁白。
+
+        :param player_inst: B4PlayerLayer 玩家实例
+        :param player_input: 玩家原始输入
+        :param elapsed_minutes: 时间跨度（N8估算结果）
+        :param game_time_str: 游戏时间字符串
+        :return: (player_delta, narration)
+        """
+        user_input = {
+            '玩家名称': player_inst.player_dict.get('玩家名称name', '未知'),
+            '玩家当前状态': player_inst.player_dict.get('当前状态CurrentState', {}),
+            '玩家持有物': player_inst.player_dict.get('持有物Inventory', {}),
+            '玩家描述': player_inst.player_dict.get('描述Description', []),
+            '玩家输入': player_input,
+            '时间跨度（分钟）': elapsed_minutes,
+            '游戏时间': game_time_str,
+        }
+
+        with open(os.path.join(BASE_PATH, r'prompt\N6_player_sys.txt'), 'r', encoding='utf-8') as f:
+            sys_prompt = f.read()
+
+        all_context = [
+            {'role': 'system', 'content': sys_prompt},
+            {'role': 'user', 'content': json.dumps(user_input, ensure_ascii=False)},
+        ]
+
+        reply = self.cli.chat_by_context(all_context, label='N6-Player')
+        result = safe_json_loads(reply, label='N6-Player')
+
+        player_delta = result.get('玩家状态变更', {})
+        narration = result.get('旁白', []) or []
+
+        self.logger.info(f'玩家自主更新：delta={player_delta} 旁白={narration}')
+        return player_delta, narration

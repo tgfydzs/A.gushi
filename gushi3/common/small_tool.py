@@ -46,6 +46,63 @@ def safe_json_loads(text: str, label: str = "") -> dict:
         raise
 
 
+# ===================== NPC名称模糊匹配 =====================
+
+def _extract_bare_names(name_str: str) -> list[str]:
+    """
+    从复合NPC名中提取纯名字部分。
+    "赵工（工地工友，曾用）、赵铁手（黑户社区，现用）" → ["赵工", "赵铁手"]
+    "老钱（黑市情报贩子，现用）、钱四海（本名）" → ["老钱", "钱四海"]
+    """
+    names = [n.strip() for n in name_str.replace('，', '、').split('、')]
+    result = []
+    for n in names:
+        # 取第一个括号前的内容作为纯名
+        bare = n.split('（')[0].split('(')[0].strip()
+        if bare:
+            result.append(bare)
+    return result
+
+
+def resolve_npc_name(partial: str, valid_names: list[str] | set[str]) -> str | None:
+    """
+    将LLM返回的部分名称匹配为完整NPC名。
+
+    匹配策略（按优先级）：
+    1. 精确匹配完整名
+    2. 子串匹配：partial 是某个完整名的子串
+    3. 纯名匹配：提取双方纯名（括号前部分），做交叉包含匹配
+       例："赵铁手（本名）"的纯名=[赵铁手]，匹配目标纯名=["赵工","赵铁手"] → 命中
+
+    :param partial: LLM输出的部分名称
+    :param valid_names: 全部合法NPC完整名
+    :return: 匹配到的完整名，未匹配返回None
+    """
+    if not partial or not valid_names:
+        return None
+
+    # 1. 精确匹配
+    if partial in valid_names:
+        return partial
+
+    # 2. 子串匹配
+    for full_name in valid_names:
+        if partial in full_name:
+            return full_name
+
+    # 3. 纯名匹配：提取括号前名字部分交叉比对
+    partial_bare = _extract_bare_names(partial)
+    if partial_bare:
+        for full_name in valid_names:
+            full_bare = _extract_bare_names(full_name)
+            for pb in partial_bare:
+                for fb in full_bare:
+                    if pb in fb or fb in pb:
+                        return full_name
+
+    return None
+
+
 # ===================== 增量合并工具 =====================
 
 def _apply_dict_delta(base: dict, delta: dict):

@@ -10,14 +10,14 @@ LOG_CONSOLE_LEVEL = 30 #控制台打印等级
 
 # ---------------- 数据驱动 ----------------------
 WORLD_DATA_FILE = r'data\B1_worldState\global.json'
-WORLD_DATA_SELECT = '霓虹暗流·都市异能档案'
+WORLD_DATA_SELECT = '苍云大陆·仙途诡道'
 
 NPC_DATA_ROOT_PATH = r'data\B3_npc'
 
-PLAYER_DATA_FILE = r'data\player\陈闲.json'
+PLAYER_DATA_FILE = r'data\player\叶尘.json'
 
 SAVE_ROOT_PATH = r'save'    # 存档根目录
-SAVE_VERSION = 1              # 存档格式版本号，Schema 变更时递增
+SAVE_VERSION = 1            # 存档格式版本号，Schema 变更时递增
 
 
 
