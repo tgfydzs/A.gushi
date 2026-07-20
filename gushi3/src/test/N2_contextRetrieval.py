@@ -77,8 +77,7 @@ while True:
     else:
         print(f'👥 （周围无人）')
     print(f'⏰ {gc.game_clock.now_str()}')
-    if has_news:
-        print('（后台有动态更新，世界在你没注意的地方运转着）')
+
 
     # ============ N1: 玩家输入 ============
     raw_input = input('>')

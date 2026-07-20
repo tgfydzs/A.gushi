@@ -48,16 +48,30 @@ class B3NPCListLayer:
         self.npc_list.remove(npc)
         logger.debug(f"NPC [{npc.name}] 已从列表移除，当前列表长度: {len(self.npc_list)}")
 
+    @staticmethod
+    def _strip_brackets(s: str) -> str:
+        """取左括号前的内容："血手（殷九娘）" → "血手"；"韩铁柱" → "韩铁柱" """
+        idx = s.find('（')
+        if idx == -1:
+            idx = s.find('(')
+        return s[:idx].strip() if idx != -1 else s.strip()
+
     def get_npc(self, name: str) -> B3NPCLayer:
         """
-        通过 name字段 in方法 查找并获取NPC实例
-        规则：传入name是npc.name的子串即视为匹配（name in n.name）
-        :param name: NPC名称
-        :return: 匹配的 B3NPCLayer 实例，若未找到则返回 None
+        通过 name 查找NPC实例。
+
+        匹配规则（统一）：
+        - 如果 name 包含 "（"，取左括号前的内容做 in 匹配
+        - 如果 name 不含括号，直接用原内容做 in 匹配
+
+        :param name: NPC名称（完整名或部分名均可）
+        :return: 匹配的 B3NPCLayer 实例，未找到返回 None
         """
+        key = self._strip_brackets(name)
         for n in self.npc_list:
-            if name in n.name:
+            if key in n.name:
                 return n
+
         logger.warn(f'获取npc实例失败，索引值：{name}')
         return None
 

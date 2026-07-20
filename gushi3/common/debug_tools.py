@@ -84,16 +84,7 @@ def diff_npcs(round_num: int, all_npc_list):
     with open(summary_path, 'w', encoding='utf-8') as f:
         json.dump(changes, f, ensure_ascii=False, indent=2)
 
-    # 控制台只打印最核心的变化
-    print(f'\n🔍 [NPC变更 轮次{round_num}] {len(changes)} 个NPC有变化：')
-    for name, diffs in changes.items():
-        fields = list(diffs.keys())
-        # 只显示前3个最关键的字段
-        shown = ', '.join(fields[:3])
-        if len(fields) > 3:
-            shown += f' ...(+{len(fields)-3}字段)'
-        print(f'  · {name}: {shown}')
-    print()
+    # 控制台不打印，只写文件
 
 
 def _dict_diff(before: dict, after: dict, _path: str = '') -> dict:

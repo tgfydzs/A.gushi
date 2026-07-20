@@ -174,52 +174,82 @@ class GameController:
 
     def consume_deferred(self, n9_director=None) -> bool:
         """
-        N0：消费后台心跳队列中的所有产出（N9a规则+N9b叙事+N9c行为）。
+        N0：消费后台心跳队列中的所有产出。
+        收集摘要文本，统一打印一行简讯，避免刷屏。
 
-        :param n9_director: N9_Director 实例（更新 triggered_rules 和叙事缓存）
+        :param n9_director: N9_Director 实例
         :return: True 表示消费了至少一条
         """
         messages = self.deferred_queue.get_all()
         if not messages:
             return False
 
+        # 收集摘要
+        rule_events = []      # N9a 世界事件摘要
+        npc_actions = []      # N9c NPC行为计数
+        spread_count = 0      # N9c 传播条数
+
         for msg in messages:
             dtype = msg.get('data_type', '')
 
-            # ===== N9a：规则触发 =====
             if dtype == 'N9a':
-                self._consume_n9a(msg, n9_director)
+                summary = self._consume_n9a(msg, n9_director)
+                if summary:
+                    rule_events.append(summary)
 
-            # ===== N9b：环境叙事 =====
             elif dtype == 'N9b':
                 self._consume_n9b(msg, n9_director)
 
-            # ===== N9c：NPC行为+传播 =====
             elif dtype == 'N9c':
-                self._consume_n9c(msg)
+                a, s = self._consume_n9c(msg)
+                npc_actions.extend(a)
+                spread_count += s
+
+        # 打印一行简讯
+        parts = []
+        if rule_events:
+            parts.append('🌍 ' + '；'.join(rule_events[:2]))
+            if len(rule_events) > 2:
+                parts[-1] += f' (+{len(rule_events)-2}条世界变化)'
+        if npc_actions:
+            names = '、'.join(npc_actions[:3])
+            s = f'🎬 {names}'
+            if len(npc_actions) > 3:
+                s += f'等{len(npc_actions)}个NPC有所行动'
+            else:
+                s += '有所行动'
+            parts.append(s)
+        if spread_count:
+            parts.append(f'📡 {spread_count}条情报在传播')
+
+        if parts:
+            print(f'  \033[2m· {"  |  ".join(parts)}\033[0m')
 
         logger.info(f'N0 消化完成：{len(messages)} 条后台消息')
         return True
 
     def _consume_n9a(self, msg: dict, n9_director):
-        """消费 N9a 消息：规则触发 → 世界状态变更 + 打印 + 上下文"""
+        """
+        消费 N9a：写入世界状态和上下文，不打印详细叙事。
+        返回一句话摘要。
+        """
         rules = msg.get('N9a_规则触发', []) or []
+        summaries = []
+
         for t in rules:
             rule_text = t.get('规则原文', '')
             valid_rules = self.b1WorldLayer.dict.get('世界演变规则列表', [])
             if rule_text not in valid_rules:
-                logger.warn(f'N9a 队列返回了不在规则列表中的规则：{rule_text[:60]}')
+                logger.warn(f'N9a 队列返回不在规则列表中的规则：{rule_text[:60]}')
                 continue
             rule_idx = valid_rules.index(rule_text)
 
             if n9_director and rule_idx in n9_director.triggered_rules:
-                logger.warn(f'N9a 规则 [{rule_idx}] 已触发过，跳过')
                 continue
 
             if n9_director:
                 n9_director.triggered_rules[rule_idx] = t.get('进度', '初期')
                 n9_director._last_rule_trigger_elapsed = getattr(getattr(self, 'game_clock', None), '_elapsed', 0)
-            logger.info(f'🌍 规则触发 [{rule_idx}]：{rule_text[:60]}...')
 
             st = t.get('世界状态变更', {}) or {}
             for ns in (st.get('增加', []) or []):
@@ -233,19 +263,29 @@ class GameController:
             progress = t.get('进度', '')
             public_view = t.get('玩家可见叙述', '')[:300]
             behind_view = t.get('幕后详情', '')[:300]
+
+            # 上下文写入不变
             if public_view and public_view.strip() and public_view != '暂无公开迹象':
-                print(f'\n🌍 [世界事件 · {progress}] {public_view}')
                 self.add_context_all(f'世界事件（{progress}）：{public_view}')
             if behind_view:
                 self.add_director_context(f'世界事件幕后（{progress}）：{behind_view}')
 
+            # 提取摘要（取叙述前15字）
+            short = ''
+            if public_view and public_view.strip() and public_view != '暂无公开迹象':
+                short = public_view[:15].rstrip('，。！？')
+            summaries.append(short or rule_text[:20].rstrip('——'))
+
+        return '；'.join(summaries) if summaries else None
+
     def _consume_n9b(self, msg: dict, n9_director):
-        """消费 N9b 消息：环境叙事 → 打印 + 上下文 + 缓存"""
+        """
+        消费 N9b：仅写入上下文和缓存，不打印。
+        """
         narrations = msg.get('N9b_环境叙事', []) or []
         for n in narrations:
             if not n:
                 continue
-            print(f'  \033[2m· {n}\033[0m')
             self.add_context_all(f'旁白：{n}')
         if n9_director and narrations:
             n9_director.recent_narrations.extend(narrations)
@@ -257,7 +297,13 @@ class GameController:
                 n9_director.narrated_themes = set(list(n9_director.narrated_themes)[-25:])
 
     def _consume_n9c(self, msg: dict):
-        """消费 N9c 消息：NPC增量+剧情传播"""
+        """
+        消费 N9c：应用NPC增量，不打印详细行动描述。
+        返回 (有行动的NPC名字列表, 传播条数)
+        """
+        acted_names = []
+        valid_names = None  # 不需要了，get_npc 自带括号剥离
+
         npc_actions = msg.get('NPC自主行为', {}) or {}
         for npc_name, action_data in npc_actions.items():
             if isinstance(action_data, str):
@@ -265,9 +311,10 @@ class GameController:
             action_text = action_data.get('动作', '') or ''
             npc_delta = action_data.get('NPC增量')
 
+            # get_npc 自带括号剥离（"血手（殷九娘）"→取"血手"做 in 匹配）
             npc = self.all_npc_list.get_npc(npc_name)
             if npc is None:
-                logger.warn(f'N9c队列NPC [{npc_name}] 未找到')
+                logger.warn(f'N9c队列NPC [{npc_name}] 未能匹配')
                 continue
             if npc_delta:
                 npc_delta = strip_empty_delta(npc_delta)
@@ -278,8 +325,10 @@ class GameController:
                 obs_entry = f'（幕后行动）{action_text}'
                 if obs_entry not in npc.observation:
                     npc.observation.append(obs_entry)
-            logger.info(f'📦 [{npc_name}] {action_text}')
+                acted_names.append(npc.name)
+                logger.info(f'📦 [{npc.name}] {action_text}')
 
+        spread_count = 0
         for spread in (msg.get('剧情级传播', []) or []):
             info = spread.get('信息', '')
             method = spread.get('方式', '')
@@ -289,6 +338,9 @@ class GameController:
                     obs_entry = f'（情报·{method}）{info}'
                     if obs_entry not in npc.observation:
                         npc.observation.append(obs_entry)
+            spread_count += 1
+
+        return acted_names, spread_count
 
     def process_npc_pipeline(self, npc_name: str, npc: B3NPCLayer, should_print: bool,
                              n4_reasoning, n5_response, n6_update, perception_msg: str):

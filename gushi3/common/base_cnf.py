@@ -9,7 +9,7 @@ DEBUG_MODE = True
 # ----------------- 日志 ---------------------
 LOG_PATH = r'log\N3.log'
 LOG_FILE_LEVEL = 20 #日志文件记录等级
-LOG_CONSOLE_LEVEL = 30 #控制台打印等级
+LOG_CONSOLE_LEVEL = 40 #控制台打印等级（40=ERROR，30=WARNING）
 
 
 # ---------------- 数据驱动 ----------------------
