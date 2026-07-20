@@ -45,4 +45,24 @@ class N4_Reasoning:
         npc_delta = json_replay.get('npc实例', {})
         new_npc_inst = apply_npc_delta(npc_inst, npc_delta)
 
+        # 去重：LLM可能重复追加相同的pending条目，Python侧兜底
+        seen = []
+        deduped = []
+        for item in new_npc_inst.pending_reasoning:
+            # 用前30字作为去重key（末尾细节差异不影响去重）
+            key = item[:30]
+            if key not in seen:
+                seen.append(key)
+                deduped.append(item)
+        if len(deduped) < len(new_npc_inst.pending_reasoning):
+            removed = len(new_npc_inst.pending_reasoning) - len(deduped)
+            new_npc_inst.pending_reasoning = deduped
+            self.logger.info(f'🧹 待解释事件去重：清理了{removed}条重复项')
+
+        # 截断：最多保留10条待解释事件，超出时丢弃最旧的
+        if len(new_npc_inst.pending_reasoning) > 10:
+            old_count = len(new_npc_inst.pending_reasoning)
+            new_npc_inst.pending_reasoning = new_npc_inst.pending_reasoning[-10:]
+            self.logger.info(f'🧹 待解释事件截断：{old_count}→10条')
+
         return new_npc_inst

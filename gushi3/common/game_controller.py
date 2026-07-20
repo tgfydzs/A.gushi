@@ -11,9 +11,10 @@ from common.log import get_logger
 from common import log as log_mod
 from common.save_load import SaveManager
 from common.base_cnf import BASE_PATH, SAVE_ROOT_PATH, SAVE_VERSION, WORLD_DATA_FILE, WORLD_DATA_SELECT, NPC_DATA_ROOT_PATH, PLAYER_DATA_FILE
-from common.small_tool import load_json_to_dict, walk_category_files, load_npc_list_from_json
+from common.small_tool import load_json_to_dict, walk_category_files, load_npc_list_from_json, apply_npc_delta, strip_empty_delta
 from common import time_int
 from common.game_clock import GameClock
+from common.deferred_queue import DeferredQueue
 
 from Schema.Context_sch import ContextHistory
 from Schema.B3_npclist_sch import B3NPCListLayer
@@ -63,6 +64,9 @@ class GameController:
 
         # ---- 存档线程追踪 ----
         self._save_threads: dict[str, threading.Thread] = {}
+
+        # ---- 后台心跳队列 ----
+        self.deferred_queue = DeferredQueue()
 
     # ===================== 初始化 =====================
 
@@ -130,6 +134,9 @@ class GameController:
 
     def restore(self, snap: dict):
         """从 snapshot() 产出的快照全量恢复运行时状态。"""
+        # 清空后台心跳队列（旧心跳基于回滚前的状态，与快照不兼容）
+        self.deferred_queue.clear()
+
         self.game_clock = GameClock.from_dict(snap['game_clock'])
         self.global_context = ContextHistory(snap['global_context'][0], snap['global_context'][1], game_clock=self.game_clock)
         self.event_context = ContextHistory(snap['event_context'][0], snap['event_context'][1], game_clock=self.game_clock)
@@ -150,7 +157,10 @@ class GameController:
         """
         将更新后的NPC按名字同步到 event_npc 和 all_npc_list。
         通过名字精确匹配定位旧实例并原地替换。
+        同步前自动截断列表字段（observation/memory）。
         """
+        updated_npc.cap_fields()
+
         for i, n in enumerate(self.event_npc.npc_list):
             if n.name == updated_npc.name:
                 self.event_npc.npc_list[i] = updated_npc
@@ -161,6 +171,124 @@ class GameController:
                 break
 
     # ===================== NPC 流水线 =====================
+
+    def consume_deferred(self, n9_director=None) -> bool:
+        """
+        N0：消费后台心跳队列中的所有产出（N9a规则+N9b叙事+N9c行为）。
+
+        :param n9_director: N9_Director 实例（更新 triggered_rules 和叙事缓存）
+        :return: True 表示消费了至少一条
+        """
+        messages = self.deferred_queue.get_all()
+        if not messages:
+            return False
+
+        for msg in messages:
+            dtype = msg.get('data_type', '')
+
+            # ===== N9a：规则触发 =====
+            if dtype == 'N9a':
+                self._consume_n9a(msg, n9_director)
+
+            # ===== N9b：环境叙事 =====
+            elif dtype == 'N9b':
+                self._consume_n9b(msg, n9_director)
+
+            # ===== N9c：NPC行为+传播 =====
+            elif dtype == 'N9c':
+                self._consume_n9c(msg)
+
+        logger.info(f'N0 消化完成：{len(messages)} 条后台消息')
+        return True
+
+    def _consume_n9a(self, msg: dict, n9_director):
+        """消费 N9a 消息：规则触发 → 世界状态变更 + 打印 + 上下文"""
+        rules = msg.get('N9a_规则触发', []) or []
+        for t in rules:
+            rule_text = t.get('规则原文', '')
+            valid_rules = self.b1WorldLayer.dict.get('世界演变规则列表', [])
+            if rule_text not in valid_rules:
+                logger.warn(f'N9a 队列返回了不在规则列表中的规则：{rule_text[:60]}')
+                continue
+            rule_idx = valid_rules.index(rule_text)
+
+            if n9_director and rule_idx in n9_director.triggered_rules:
+                logger.warn(f'N9a 规则 [{rule_idx}] 已触发过，跳过')
+                continue
+
+            if n9_director:
+                n9_director.triggered_rules[rule_idx] = t.get('进度', '初期')
+                n9_director._last_rule_trigger_elapsed = getattr(getattr(self, 'game_clock', None), '_elapsed', 0)
+            logger.info(f'🌍 规则触发 [{rule_idx}]：{rule_text[:60]}...')
+
+            st = t.get('世界状态变更', {}) or {}
+            for ns in (st.get('增加', []) or []):
+                if ns and ns not in self.b1WorldLayer.dict.get('世界状态列表', []):
+                    self.b1WorldLayer.dict['世界状态列表'].append(ns)
+            for os_ in (st.get('删减', []) or []):
+                sl = self.b1WorldLayer.dict.get('世界状态列表', [])
+                if os_ and os_ in sl:
+                    sl.remove(os_)
+
+            progress = t.get('进度', '')
+            public_view = t.get('玩家可见叙述', '')[:300]
+            behind_view = t.get('幕后详情', '')[:300]
+            if public_view and public_view.strip() and public_view != '暂无公开迹象':
+                print(f'\n🌍 [世界事件 · {progress}] {public_view}')
+                self.add_context_all(f'世界事件（{progress}）：{public_view}')
+            if behind_view:
+                self.add_director_context(f'世界事件幕后（{progress}）：{behind_view}')
+
+    def _consume_n9b(self, msg: dict, n9_director):
+        """消费 N9b 消息：环境叙事 → 打印 + 上下文 + 缓存"""
+        narrations = msg.get('N9b_环境叙事', []) or []
+        for n in narrations:
+            if not n:
+                continue
+            print(f'  \033[2m· {n}\033[0m')
+            self.add_context_all(f'旁白：{n}')
+        if n9_director and narrations:
+            n9_director.recent_narrations.extend(narrations)
+            if len(n9_director.recent_narrations) > 20:
+                n9_director.recent_narrations = n9_director.recent_narrations[-20:]
+            for n in narrations:
+                n9_director.narrated_themes.add(n[:15])
+            if len(n9_director.narrated_themes) > 50:
+                n9_director.narrated_themes = set(list(n9_director.narrated_themes)[-25:])
+
+    def _consume_n9c(self, msg: dict):
+        """消费 N9c 消息：NPC增量+剧情传播"""
+        npc_actions = msg.get('NPC自主行为', {}) or {}
+        for npc_name, action_data in npc_actions.items():
+            if isinstance(action_data, str):
+                action_data = {'动作': action_data}
+            action_text = action_data.get('动作', '') or ''
+            npc_delta = action_data.get('NPC增量')
+
+            npc = self.all_npc_list.get_npc(npc_name)
+            if npc is None:
+                logger.warn(f'N9c队列NPC [{npc_name}] 未找到')
+                continue
+            if npc_delta:
+                npc_delta = strip_empty_delta(npc_delta)
+                if npc_delta:
+                    npc = apply_npc_delta(npc, npc_delta)
+                    self.sync_npc_to_lists(npc)
+            if action_text:
+                obs_entry = f'（幕后行动）{action_text}'
+                if obs_entry not in npc.observation:
+                    npc.observation.append(obs_entry)
+            logger.info(f'📦 [{npc_name}] {action_text}')
+
+        for spread in (msg.get('剧情级传播', []) or []):
+            info = spread.get('信息', '')
+            method = spread.get('方式', '')
+            for npc_name in (spread.get('到达NPC', []) or []):
+                npc = self.all_npc_list.get_npc(npc_name)
+                if npc:
+                    obs_entry = f'（情报·{method}）{info}'
+                    if obs_entry not in npc.observation:
+                        npc.observation.append(obs_entry)
 
     def process_npc_pipeline(self, npc_name: str, npc: B3NPCLayer, should_print: bool,
                              n4_reasoning, n5_response, n6_update, perception_msg: str):
@@ -231,6 +359,9 @@ class GameController:
 
     def rebuild_game_state(self, save_dict: dict):
         """从存档字典重建 self 的全部运行时状态"""
+        # 清空后台心跳队列（旧数据与读档后的世界不兼容）
+        self.deferred_queue.clear()
+
         # 时钟先恢复（上下文需要它）
         self.game_clock = GameClock.from_dict(save_dict.get("game_clock", {}))
         self.global_context = ContextHistory(
@@ -283,6 +414,9 @@ class GameController:
         if prev and prev.is_alive():
             print(f'⚠️  存档 [{name}] 正在进行中，请稍后')
             return
+
+        # 先消费队列，确保快照包含最新的心跳结果
+        self.consume_deferred()
 
         state = self.build_save_state(name)
         extra = self._extra_save_files()
@@ -462,6 +596,6 @@ class GameController:
                 print(f'└── /player inv 查看持有物 | /player desc 查看描述 | /player all 全部')
 
         else:
-            print(f'未知命令：{cmd}  可用：/save /load /saves /quick_save /quick_load /context /npcs /player')
+            print(f'未知命令：{cmd}  可用：/save /load /saves /quick_save /quick_load /context /npcs /player /debug')
 
         return 'continue'

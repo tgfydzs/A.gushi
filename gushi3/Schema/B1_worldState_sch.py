@@ -208,42 +208,44 @@ class B1WorldLayer:
                     current_path = new_path
                     children = None  # 自定义位置，允许继续细化
                 # n 或其他 → 留在当前菜单
-                # 数字选择
-                if children and isinstance(children, dict):
-                    keys = list(children.keys())
-                    try:
-                        idx = int(choice) - 1
-                        if 0 <= idx < len(keys):
-                            selected = keys[idx]
-                            current_path.append(selected)
-                            new_children = children[selected]
-                            # 叶节点（字符串值或空dict）→ 可选确认或继续细化
-                            if not isinstance(new_children, dict) or len(new_children) == 0:
-                                target = '·'.join(current_path)
-                                desc_str = ''
-                                if isinstance(new_children, str) and new_children:
-                                    desc_str = f'（{new_children[:40]}）'
-                                print(f'  已选择叶节点：{target} {desc_str}')
-                                print('  [y] ✅ 确认前往')
-                                print('  [c] 📝 继续细化（在此之下创建更具体的位置）')
-                                confirm = input('  > ').strip().lower()
-                                if confirm == 'y':
-                                    return target
-                                elif confirm == 'c':
-                                    custom = input('  输入更具体的位置名称：\n  > ').strip()
-                                    if custom:
-                                        current_path.append(custom.split('·')[0])
-                                        children = None
-                                    continue
-                                else:
-                                    current_path.pop()
+                continue
+
+            # 数字选择（上述命令都不匹配 → 尝试按数字选子节点）
+            if children and isinstance(children, dict):
+                keys = list(children.keys())
+                try:
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(keys):
+                        selected = keys[idx]
+                        current_path.append(selected)
+                        new_children = children[selected]
+                        # 叶节点（字符串值或空dict）→ 可选确认或继续细化
+                        if not isinstance(new_children, dict) or len(new_children) == 0:
+                            target = '·'.join(current_path)
+                            desc_str = ''
+                            if isinstance(new_children, str) and new_children:
+                                desc_str = f'（{new_children[:40]}）'
+                            print(f'  已选择叶节点：{target} {desc_str}')
+                            print('  [y] ✅ 确认前往')
+                            print('  [c] 📝 继续细化（在此之下创建更具体的位置）')
+                            confirm = input('  > ').strip().lower()
+                            if confirm == 'y':
+                                return target
+                            elif confirm == 'c':
+                                custom = input('  输入更具体的位置名称：\n  > ').strip()
+                                if custom:
+                                    current_path.append(custom.split('·')[0])
+                                    children = None
                                 continue
                             else:
-                                children = new_children
-                                continue
-                    except ValueError:
-                        pass
-                print('无效选项，请重新输入')
+                                current_path.pop()
+                            continue
+                        else:
+                            children = new_children
+                            continue
+                except ValueError:
+                    pass
+            print('无效选项，请重新输入')
 
     # ===================== 位置距离计算 =====================
 

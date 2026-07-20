@@ -1,5 +1,5 @@
 ---
-title: 故事3 v5 — 主线程+后台心跳分离，N3输出决定NPC锁定
+title: 故事3 v5 — 主线程+后台心跳分离，N9c传入NPC实例数据
 ---
 %%{init: {'theme': 'default', 'themeVariables': {'primaryColor': '#eceff1', 'primaryTextColor': '#37474f', 'primaryBorderColor': '#90a4ae', 'lineColor': '#90a4ae', 'fontSize': '16px'}}}%%
 flowchart TB
@@ -14,15 +14,17 @@ flowchart TB
         data_clock["⏰ GameClock<br/>独立模拟时间"]
         data_ctx["📝 ContextHistory ×3<br/>global(玩家可见) / event(AI用·随新事件清空)<br/>director(AI用·持久·不向玩家暴露)"]
         data_queue["📋 DeferredQueue<br/>后台N9c产出→主循环消化<br/>线程安全队列"]
+        data_lock["🔒 locked_set<br/>N3产出本轮锁定NPC<br/>未锁定跳过N4N5N6"]
     end
 
     %% =========================================
-    %% N0 循环顶（消化后台 + 场景快照）
+    %% N0 循环顶（消费队列 + 场景快照）
     %% =========================================
     subgraph N0["N0 循环顶 ✅ 纯Python"]
         direction TB
-        n0_defer["① 消费 DeferredQueue<br/>apply_npc_delta() + sync_npc_to_lists()<br/>打印后台动态摘要"]
-        n0_look["② 展示当前场景快照<br/>'你在旧城区·街边炒粉摊<br/>在场：老板、顾客甲'"]
+        n0_defer["① 消费 DeferredQueue<br/>逐一取后台N9c产出<br/>apply_npc_delta() + sync_npc_to_lists()<br/>打印后台动态摘要"]
+        n0_look["② 展示当前场景快照<br/>位置 / 在场NPC / 可交互物"]
+        n0_reset["③ 清空 locked_set"]
         n0_done["准备就绪 → input()"]
     end
 
@@ -33,7 +35,7 @@ flowchart TB
         direction TB
         n1_input["玩家输入 raw_input"]
         n1_cmd{"命令判断"}
-        n1_cmds["命令处理<br/>存档: /save /load /saves /quick_save /quick_load<br/>查看: /context /npcs /player /player inv /player desc<br/>撤回: !!  /  退出: exit"]
+        n1_cmds["命令处理<br/>存档: /save /load /saves /quick_save /quick_load<br/>查看: /context /npcs /player /player inv /player desc<br/>撤回: !! / exit"]
         n1_undo["!! 撤回<br/>gc.restore(last_snapshot)<br/>+ n9_director.restore(last_n9_state)"]
         n1_move["移动标记检测<br/>resolve_move_markers()<br/>{移动} / /move"]
         n1_nav["交互式导航 → 选目标位置<br/>B1WorldLayer.navigate_interactive()<br/>可创建任意深度子位置"]
@@ -68,15 +70,14 @@ flowchart TB
     %% =========================================
     %% N3 感知层 + 锁定
     %% =========================================
-    subgraph N3_LOCK["N3 感知层 ✅ LLM → 锁定NPC"]
+    subgraph N3["N3 感知层 ✅ LLM → 锁定NPC"]
         direction TB
         n3_input["输入：event_context + event_npc + related_npc<br/>+ 玩家位置 + director_context"]
         n3_llm["LLM判断<br/>prompt/N3_informationFiltering_sys.txt"]
         n3_event["事件涉及的npc<br/>'玩家对你说：...'"]
         n3_related["事件涉及/潜在npc"]
         n3_ground["地段传播<br/>{msg, level, mask}"]
-
-        n3_lock["③ N3输出决定本轮锁定NPC<br/>event_npc + related_npc = locked_set<br/>这些NPC进入N4N5N6流水线<br/>未锁定NPC跳过N4N5N6"]
+        n3_lock["③ N3输出 → locked_set<br/>event_npc + related_npc<br/>这些NPC走N4N5N6<br/>未锁定跳过"]
 
         n3_input --> n3_llm
         n3_llm --> n3_event & n3_related & n3_ground
@@ -87,16 +88,16 @@ flowchart TB
     %% =========================================
     %% N4→N5→N6 仅锁定NPC
     %% =========================================
-    subgraph NPC_PIPE["⚡ N4→N5→N6 仅锁定NPC ThreadPoolExecutor"]
+    subgraph NPC_PIPE["⚡ N4→N5→N6 仅 locked_set 中的NPC"]
         direction TB
-        npipe_tasks["仅 locked_set 中的NPC入流水线<br/>其他NPC不生成回应"]
+        npipe_tasks["组装 tasks<br/>只取 locked_set ∩ (event_npc∪related_npc)<br/>每个NPC一条独立流水线"]
         npipe_pool["并行提交 gc.process_npc_pipeline()"]
 
         subgraph N4["N4 推理层 ✅ LLM"]
             n4_llm["reason_for_npc()<br/>prompt/N4_reasoning_sys<br/>更新待解释事件表"]
         end
         subgraph N5["N5 回应层 ✅ LLM"]
-            n5_llm["response_say()<br/>prompt/N5_response_sys<br/>产出回应+内心想法"]
+            n5_llm["response_say()<br/>prompt/N5_response_sys<br/>不接受玩家实例，产出回应+内心想法"]
         end
         subgraph N6["N6 更新层 ✅ LLM"]
             n6_llm["update_for_npc()<br/>prompt/N6_update_sys<br/>唯一接受玩家实例<br/>产出delta增量"]
@@ -111,27 +112,24 @@ flowchart TB
     end
 
     %% =========================================
-    %% N7 + N8 并行
+    %% N7 / N8 并行
     %% =========================================
     subgraph N7N8["⏱️ N7+N8 并行"]
         direction LR
         subgraph N7["N7 传播层 ✅ 纯规则"]
-            n7_in["N3地段传播 {msg,level,mask}"]
-            n7_calc["LCA距离 → level决定层级<br/>mask概率 → 随机筛选"]
-            n7_out["写入NPC.observation"]
+            n7_in["N3地段传播 {msg,level,mask}<br/>亲历NPC名单 / 玩家位置"]
+            n7_calc["LCA距离 → 扩散层级<br/>mask概率 → 随机筛选"]
+            n7_out["传闻写入NPC.observation"]
         end
         subgraph N8["N8 时间层 ✅ 纯LLM"]
-            n8_move{"有移动?"}
             n8_llm["LLM统一判断耗时<br/>prompt/N8_time_ability_sys<br/>含移动/对话/玩家声明时间"]
             n8_advance["game_clock.advance()"]
-            n8_move -- "是" --> n8_llm
-            n8_move -- "否" --> n8_llm
             n8_llm --> n8_advance
         end
     end
 
     %% =========================================
-    %% N9a + N9b 主线程（N9c移至后台）
+    %% N9a + N9b 主线程
     %% =========================================
     subgraph N9_MAIN["🎬 N9a + N9b 主线程 并行"]
         direction LR
@@ -148,27 +146,28 @@ flowchart TB
     end
 
     %% =========================================
-    %% 后台心跳（独立线程）
+    %% 后台世界心跳（独立线程）
     %% =========================================
     subgraph HEARTBEAT["⚡ 后台世界心跳 (独立线程)"]
         direction TB
 
         hb_cond{"触发条件"}
-        hb_cond_detail["• 主循环每完成3轮触发一次<br/>• 累计游戏时间推进 >= 12小时触发一次<br/>• 玩家连续N分钟无输入（N可配，默认关闭）"]
+        hb_cond_detail["• 主循环每完成3轮触发一次<br/>• 累计游戏时间推进 ≥ 12小时触发一次<br/>• 连续N分钟无输入（N可配，默认关闭）"]
         hb_cond --> hb_cond_detail
 
-        hb_filter["① 规则过滤器（纯Python·微秒级）<br/>遍历全部NPC，逐NPC判断：<br/>有活跃目标且距上次推进>5轮？<br/>所在区域最近有世界状态变化？<br/>N7传播最近到达了ta？<br/>→ 以上都不是 → 跳过（日常不处理）"]
+        hb_filter["① 规则过滤器（纯Python·微秒级）<br/>遍历 all_npc_list，逐NPC检查：<br/>有生活目标且距上次推进>5轮？→ 原因=目标推进<br/>有待解释事件？→ 原因=待推理<br/>所在区域有世界状态变化？→ 原因=区域事件<br/>有N7新传闻到达？→ 原因=新情报<br/>以上都不是 → 跳过（日常行为）"]
 
-        hb_group["② 分组器<br/>按location前缀分组<br/>每队上限5个NPC<br/>每组一个独立N9c调用"]
+        hb_group["② 关联分组器（纯Python）<br/>按触发原因聚类合并：<br/>• 同一区域事件 → 同一组<br/>• 同一地区目标推进 → 同一组<br/>• 同一势力/情报链 → 同一组<br/>• 无关联的独立NPC各自成组<br/>每组上限5个，超限拆分<br/>每组NPC能看到彼此的完整状态"]
 
         subgraph N9c["N9c NPC行为+传播 ✅ LLM × N组并行"]
-            n9c_llm["每组一个LLM调用<br/>prompt/N9c_behavior_sys<br/>温度0.6<br/>ThreadPoolExecutor(max_workers=6)"]
-            n9c_out["输出NPC增量delta<br/>→ 推入 DeferredQueue<br/>主循环N0时消化"]
+            n9c_prep["每组调度前：<br/>遍历组内NPC → 逐一调用 to_dict()<br/>取完整10张表快照<br/>深拷贝，纯读取"]
+            n9c_llm["每组一个LLM调用<br/>prompt/N9c_behavior_sys<br/>温度0.6<br/>入参={该组NPC完整数据, 共享上下文}<br/>ThreadPoolExecutor(max_workers=6)"]
+            n9c_out["输出结构同现有N9c<br/>含NPC增量delta + 剧情传播<br/>→ 推入 DeferredQueue<br/>不碰任何NPC实例"]
         end
 
-        hb_filter -- "候审NPC" --> hb_group --> n9c_llm --> n9c_out
+        hb_filter --> hb_group --> n9c_prep --> n9c_llm --> n9c_out
 
-        hb_result["③ 队列等待主循环消化<br/>不碰任何NPC实例<br/>零竞态"]
+        hb_done["队列等待主循环N0消化<br/>apply_npc_delta() + sync_npc_to_lists()<br/>零竞态"]
     end
 
     %% =========================================
@@ -176,16 +175,15 @@ flowchart TB
     %% =========================================
     n0_done --> N1
     n1_done --> N2
-    N2 --> N3_LOCK
+    N2 --> N3
+
     n3_lock --> NPC_PIPE
+    n3_lock -.->|"未锁定NPC跳过N4N5N6"| N7N8
     NPC_PIPE --> N7N8
     N7N8 --> N9_MAIN
-    N9_MAIN --> LOOP["🔄 回到N0（循环顶）"]
+    N9_MAIN --> LOOP["🔄 回到N0"]
 
     LOOP --> n0_defer
-
-    %% 未锁定NPC跳过N4N5N6直接到N7
-    n3_lock -.->|"未锁定NPC跳过N4N5N6"| N7N8
 
     %% 后台心跳连线
     hb_cond -.-> hb_filter
@@ -193,34 +191,34 @@ flowchart TB
     data_queue -.->|"deferred_queue.get()"| n0_defer
 
     %% 导演上下文回流
-    N9a -.->|"幕后详情"| DIRCTX["📋 director_context<br/>持久·不随事件清空"]
-    N9a -.->|"世界事件"| N9b
+    N9a -.-> DIRCTX["📋 director_context"]
+    N9a -.-> N9b
     DIRCTX -.-> N2
-    DIRCTX -.-> N3_LOCK
+    DIRCTX -.-> N3
     DIRCTX -.-> N9a
 
     %% =========================================
     %% 存档
     %% =========================================
     subgraph SAVE["💾 存档系统"]
-        sv_snap["gc.snapshot() → 后台线程写入<br/>不阻塞主循环"]
+        sv_snap["gc.snapshot() → 后台写入<br/>不阻塞主循环"]
     end
 
     %% =========================================
     %% 样式
     %% =========================================
-    style N0 fill:#f0faf0,stroke:#81c784,color:#333
+    style N0 fill:#e8f5e9,stroke:#66bb6a,color:#333
     style N1 fill:#f0faf0,stroke:#81c784,color:#333
-    style N2 fill:#f0f5ff,stroke:#64b5f6,color:#333
-    style N3_LOCK fill:#fff8f0,stroke:#ffb74d,color:#333
-    style N4 fill:#fff0f3,stroke:#e57373,color:#333
-    style N5 fill:#faf0fa,stroke:#ba68c8,color:#333
-    style N6 fill:#f0fafa,stroke:#4db6ac,color:#333
-    style N7 fill:#fffff0,stroke:#fff176,color:#333
-    style N8 fill:#f5f5ff,stroke:#7986cb,color:#333
-    style N9a fill:#fff5f5,stroke:#ef9a9a,color:#333
-    style N9b fill:#fff5f5,stroke:#ef9a9a,color:#333
-    style N9c fill:#f5f0ff,stroke:#ab47bc,color:#333
+    style N2 fill:#e3f2fd,stroke:#42a5f5,color:#333
+    style N3 fill:#fff3e0,stroke:#ffa726,color:#333
+    style N4 fill:#fce4ec,stroke:#ef5350,color:#333
+    style N5 fill:#f3e5f5,stroke:#ab47bc,color:#333
+    style N6 fill:#e0f2f1,stroke:#26a69a,color:#333
+    style N7 fill:#fffde7,stroke:#ffee58,color:#333
+    style N8 fill:#e8eaf6,stroke:#5c6bc0,color:#333
+    style N9a fill:#ffebee,stroke:#e53935,color:#333
+    style N9b fill:#ffebee,stroke:#e53935,color:#333
+    style N9c fill:#f3e5f5,stroke:#ab47bc,color:#333
     style HEARTBEAT fill:#f3e5f5,stroke:#ab47bc,color:#333
     style DATA fill:#fafafa,stroke:#bdbdbd,color:#333
     style SAVE fill:#f8f8f8,stroke:#9e9e9e,color:#333

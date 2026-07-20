@@ -113,7 +113,12 @@ class N7_Propagation:
                 results[npc.name] = []
             results[npc.name].append(rumor)
 
-        # ---- 6. 日志 ----
+        # ---- 6. 截断 ----
+        for npc in affected_npcs.npc_list:
+            if npc.name not in exclude:
+                npc.cap_fields()
+
+        # ---- 7. 日志 ----
         affected_loc = world_layer.format_path(affected_path)
         self.logger.info(
             f'传播完成 | msg="{msg[:40]}{"..." if len(msg)>40 else ""}" '

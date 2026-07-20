@@ -31,6 +31,29 @@ class B3NPCLayer:
         self.pending_reasoning = dict['待解释事件PendingReasoning']
         self.update_cost = dict['表更新成本UpdateCost']
 
+    MAX_OBSERVATION = 20
+    MAX_MEMORY = 30
+    MAX_PENDING = 10
+
+    def cap_fields(self):
+        """
+        截断所有列表类型字段，防止无限增长。
+        在每个修改入口（sync_npc_to_lists、N7传播等）后调用。
+        """
+        # Observation：保留最近N条
+        if len(self.observation) > self.MAX_OBSERVATION:
+            dropped = len(self.observation) - self.MAX_OBSERVATION
+            self.observation = self.observation[-self.MAX_OBSERVATION:]
+            logger.debug(f'🧹 [{self.name}] observation截断：丢弃{dropped}条')
+
+        # Memory：保留最近N条
+        if len(self.memory) > self.MAX_MEMORY:
+            self.memory = self.memory[-self.MAX_MEMORY:]
+
+        # PendingReasoning：保留最近N条
+        if len(self.pending_reasoning) > self.MAX_PENDING:
+            self.pending_reasoning = self.pending_reasoning[-self.MAX_PENDING:]
+
     def to_dict(self) -> dict:
         return {
             '名字Name': self.name,

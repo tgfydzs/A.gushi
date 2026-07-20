@@ -1,6 +1,10 @@
 import os
 
 BASE_PATH = r'E:\A.gushi\gushi3'
+DEBUG_MODE = True
+
+
+
 
 # ----------------- 日志 ---------------------
 LOG_PATH = r'log\N3.log'
