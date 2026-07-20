@@ -111,15 +111,24 @@ class B1WorldLayer:
 
             # ---------- 列出子节点 ----------
             if children is None:
-                # 路径在数据中不存在 → 当前是手动输入的自由位置，只能确认或返回
+                # 路径在数据中不存在 → 当前是手动输入的自由位置
                 print('  (当前为自定义位置，无预设子地点)')
                 print()
                 print('  [c] ✅ 确认当前位置为目标')
+                print('  [0] ✏️  继续细化（输入更具体的位置）')
                 print('  [b] 🔙 返回上级')
                 print('  [x] ❌ 取消')
                 choice = input('> ').strip().lower()
                 if choice == 'c':
                     return '·'.join(current_path) if current_path else None
+                elif choice == '0':
+                    custom = input('  输入更具体的位置名称：\n> ').strip()
+                    if not custom:
+                        print('输入为空')
+                        continue
+                    current_path.append(custom.split('·')[0])
+                    children = None  # 仍然是自定义位置
+                    continue
                 elif choice == 'b':
                     if current_path:
                         current_path.pop()
@@ -153,7 +162,8 @@ class B1WorldLayer:
                     print(f'  [{i}] {key}{desc}')
             else:
                 # children 是空字典或字符串值 → 叶节点
-                print('  (叶节点，无子地点)')
+                print('  (叶节点，无预设子地点)')
+                print('  可用 [0] 输入更具体的位置')
 
             print()
             print('  [0] ✏️  手动输入自定义位置')
@@ -181,7 +191,7 @@ class B1WorldLayer:
                     print('根节点不能作为目标位置，请选择具体地点')
                     continue
             elif choice == '0':
-                # 手动输入
+                # 手动输入 — 允许任意深度
                 custom = input('  输入自定义位置名称：\n> ').strip()
                 if not custom:
                     print('输入为空，已取消')
@@ -196,10 +206,8 @@ class B1WorldLayer:
                     return target
                 elif confirm == 'c':
                     current_path = new_path
-                    children = None  # 自定义位置无预设子节点
+                    children = None  # 自定义位置，允许继续细化
                 # n 或其他 → 留在当前菜单
-                continue
-            else:
                 # 数字选择
                 if children and isinstance(children, dict):
                     keys = list(children.keys())
@@ -209,16 +217,24 @@ class B1WorldLayer:
                             selected = keys[idx]
                             current_path.append(selected)
                             new_children = children[selected]
-                            # 叶节点（字符串值或空dict）→ 自动确认
+                            # 叶节点（字符串值或空dict）→ 可选确认或继续细化
                             if not isinstance(new_children, dict) or len(new_children) == 0:
                                 target = '·'.join(current_path)
                                 desc_str = ''
                                 if isinstance(new_children, str) and new_children:
                                     desc_str = f'（{new_children[:40]}）'
                                 print(f'  已选择叶节点：{target} {desc_str}')
-                                confirm = input('  确认前往？[y/n] > ').strip().lower()
+                                print('  [y] ✅ 确认前往')
+                                print('  [c] 📝 继续细化（在此之下创建更具体的位置）')
+                                confirm = input('  > ').strip().lower()
                                 if confirm == 'y':
                                     return target
+                                elif confirm == 'c':
+                                    custom = input('  输入更具体的位置名称：\n  > ').strip()
+                                    if custom:
+                                        current_path.append(custom.split('·')[0])
+                                        children = None
+                                    continue
                                 else:
                                     current_path.pop()
                                 continue

@@ -260,12 +260,10 @@ while True:
             gc.player.player_dict['当前状态CurrentState']['当前所处位置'] = move_info['to']
         return n8_time.process(
             game_clock=gc.game_clock,
-            world_layer=gc.b1WorldLayer,
-            player_inst=gc.player,
-            move_info=move_info,
+            player_input=player_input,
             event_context=gc.event_context.context,
             npc_responses=npc_responses,
-            player_input=player_input,
+            move_info=move_info,
         )
 
     # N7 和 N8 并行启动（N7 零耗时，N8 可能有LLM调用）
@@ -284,11 +282,11 @@ while True:
 
     # N8 时间推进后的位置更新（移动→规则走这里）
     if move_info:
-        logger.info(f'移动：{move_info["from"]} → {move_info["to"]}（{move_info["method"]}，{n8_minutes:.1f}分钟）')
+        logger.info(f'移动：{move_info["from"]} → {move_info["to"]}（{n8_minutes:.1f}分钟）')
         player_loc = move_info['to']
         gc.player.player_dict['当前状态CurrentState']['当前所处位置'] = player_loc
         # 移动单独写入上下文
-        move_context = f'{player_name}从{move_info["from"]}前往{move_info["to"]}（{move_info["method"]}，耗时{n8_minutes:.1f}分钟）'
+        move_context = f'{player_name}从{move_info["from"]}前往{move_info["to"]}（耗时{n8_minutes:.1f}分钟）'
         gc.add_context_all(move_context)
 
     # 玩家自主行动处理（无NPC参与时，由N6玩家更新层处理状态变更）
@@ -312,76 +310,12 @@ while True:
                 gc.add_global_context(f'旁白：{line}')
             logger.info(f'玩家自主行动旁白：{all_narrations}')
 
-    # ============ N9: 导演层（世界暗线推动） ============
-    n9_result = n9_director.process(
-        world_layer=gc.b1WorldLayer,
-        game_clock=gc.game_clock,
-        player_inst=gc.player,
+    # ============ N9: 导演层（LLM驱动世界暗线，自行落地副作用） ============
+    n9_summary = n9_director.process(
+        game_controller=gc,
         event_context=gc.event_context.context,
-        director_context=gc.director_context.context,
         npc_responses=npc_responses,
-        all_npc_names=all_npc_names,
         n7_result=n7_result,
     )
-
-    # ---- 处理 N9 结果 ----
-    # 可见性原则：
-    #   玩家可见（打印 + global_context）：世界事件后果、环境叙事
-    #   AI可见（event_context，N2/N3等LLM层能读到）但不打印：NPC幕后行动、情报传播
-    #   纯内部（仅NPC.observation）：NPC幕后行动
-
-    # 1. 世界事件 → 玩家只看到普通人视角的叙述，幕后详情写入director_context
-    for trigger in (n9_result.get('规则触发', []) or []):
-        state_changes = trigger.get('世界状态变更', {}) or {}
-        for new_state in (state_changes.get('增加', []) or []):
-            if new_state and new_state not in gc.b1WorldLayer.dict.get('世界状态列表', []):
-                gc.b1WorldLayer.dict['世界状态列表'].append(new_state)
-                logger.info(f'🌍 世界状态新增：{new_state}')
-        for old_state in (state_changes.get('删减', []) or []):
-            state_list = gc.b1WorldLayer.dict.get('世界状态列表', [])
-            if old_state and old_state in state_list:
-                state_list.remove(old_state)
-                logger.info(f'🌍 世界状态移除：{old_state}')
-        public_view = trigger.get('玩家可见叙述', '')[:300]
-        behind_view = trigger.get('幕后详情', '')[:300]
-        progress = trigger.get('进度', '')
-        if public_view and public_view.strip() and public_view != '暂无公开迹象':
-            print(f'\n🌍 [世界事件 · {progress}] {public_view}')
-            gc.add_context_all(f'世界事件（{progress}）：{public_view}')
-            logger.info(f'🌍 世界事件公开：{public_view[:120]}')
-        if behind_view:
-            gc.add_director_context(f'世界事件幕后（{progress}）：{behind_view}')
-            logger.info(f'🌍 幕后详情：{behind_view[:120]}')
-
-    # 2. 环境叙事 → 玩家可见（低调呈现）+ AI可见
-    for narration in (n9_result.get('环境叙事', []) or []):
-        if narration:
-            print(f'  \033[2m· {narration}\033[0m')
-            gc.add_context_all(f'旁白：{narration}')
-
-    # 3. NPC自主行为 → AI可见（director_context供LLM层评估）+ NPC内部（observation）
-    for npc_name, action in (n9_result.get('NPC自主行为', {}) or {}).items():
-        npc = gc.all_npc_list.get_npc(npc_name)
-        if npc:
-            obs_entry = f'（幕后行动）{action}'
-            if obs_entry not in npc.observation:
-                npc.observation.append(obs_entry)
-        gc.add_director_context(f'幕后：{npc_name} — {action}')
-        logger.info(f'🎬 [{npc_name}] 幕后行动：{action}')
-
-    # 4. 剧情级传播 → AI可见（director_context）+ 到达NPC内部（observation）
-    for spread in (n9_result.get('剧情级传播', []) or []):
-        info = spread.get('信息', '')
-        reach = spread.get('到达NPC', []) or []
-        method = spread.get('方式', '')
-        if info:
-            gc.add_director_context(f'情报（{method}）：{info} → {reach}')
-            logger.info(f'📡 情报（{method}）：{info} → {reach}')
-            for npc_name in reach:
-                npc = gc.all_npc_list.get_npc(npc_name)
-                if npc:
-                    obs_entry = f'（情报·{method}）{info}'
-                    if obs_entry not in npc.observation:
-                        npc.observation.append(obs_entry)
 
     print(f'\n⏰ [游戏时间 {gc.game_clock.now_str()}（+{n8_minutes:.0f}分）]')

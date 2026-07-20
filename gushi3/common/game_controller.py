@@ -4,6 +4,7 @@
 """
 
 import os
+import threading
 from copy import deepcopy
 
 from common.log import get_logger
@@ -59,6 +60,9 @@ class GameController:
         # ---- 世界 & 玩家 ----
         self.b1WorldLayer: B1WorldLayer = None
         self.player: B4PlayerLayer = None
+
+        # ---- 存档线程追踪 ----
+        self._save_threads: dict[str, threading.Thread] = {}
 
     # ===================== 初始化 =====================
 
@@ -273,16 +277,33 @@ class GameController:
         return extra
 
     def _do_save(self, name: str):
-        """执行存档，自动附带日志文件"""
+        """执行存档（后台写入，不阻塞主循环）"""
+        # 同名存档正在进行中 → 跳过
+        prev = self._save_threads.get(name)
+        if prev and prev.is_alive():
+            print(f'⚠️  存档 [{name}] 正在进行中，请稍后')
+            return
+
         state = self.build_save_state(name)
-        self.save_manager.save(state, name, self._extra_save_files())
-        print(f'💾 已存档：{name}')
+        extra = self._extra_save_files()
+        print(f'💾 正在存档：{name}...')
+        t = threading.Thread(target=self._save_worker, args=(name, state, extra), daemon=True)
+        self._save_threads[name] = t
+        t.start()
+
+    def _save_worker(self, name: str, state: dict, extra: dict):
+        """后台写盘线程"""
+        try:
+            self.save_manager.save(state, name, extra)
+            print(f'💾 已存档：{name}')
+            logger.info(f'存档完成：{name}')
+        except Exception as e:
+            print(f'❌ 存档 [{name}] 失败：{e}')
+            logger.error(f'存档失败 [{name}]：{e}')
 
     def _do_quick_save(self):
-        """执行快速存档，自动附带日志文件"""
-        state = self.build_save_state("quick_save")
-        self.save_manager.quick_save(state, self._extra_save_files())
-        print('💾 已快速存档')
+        """快速存档（后台写入，不阻塞主循环）"""
+        self._do_save('quick_save')
 
     # ===================== 命令处理 =====================
 

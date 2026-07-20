@@ -281,32 +281,9 @@ def walk_category_files(root_folder: str):
 
 
 
-# 移动方式选项列表
-MOVE_METHODS = ['步行', '跑步', '骑电动车', '公共交通', '异能移动']
-
-
-def _select_move_method() -> str | None:
-    """交互式选择移动方式，返回方式名；取消返回 None"""
-    print()
-    print('  选择移动方式：')
-    for i, method in enumerate(MOVE_METHODS, 1):
-        print(f'    [{i}] {method}')
-    print('    [Enter] 步行（默认）')
-    choice = input('  > ').strip()
-    if choice == '':
-        return '步行'
-    try:
-        idx = int(choice) - 1
-        if 0 <= idx < len(MOVE_METHODS):
-            return MOVE_METHODS[idx]
-    except ValueError:
-        pass
-    return '步行'  # 无效输入 → 默认
-
-
 def resolve_move_markers(raw_input: str, world_layer: B1WorldLayer, player=None):
     """
-    扫描玩家输入中的移动标记，触发交互式导航和移动方式选择。
+    扫描玩家输入中的移动标记，触发交互式位置导航。
 
     触发标记（不区分大小写）：
       - {移动} 或 {move}      → 占位符替换
@@ -317,13 +294,13 @@ def resolve_move_markers(raw_input: str, world_layer: B1WorldLayer, player=None)
       1. 检测原始输入是否包含触发标记
       2. 若触发 → 调用 world_layer.navigate_interactive()
       3. 若导航取消 → 返回 (None, None)
-      4. 若导航完成 → 选择移动方式 → 将选中路径替换到标记位置
+      4. 若导航完成 → 将选中路径替换到标记位置，不询问移动方式
 
     :param raw_input: 玩家原始输入
     :param world_layer: B1WorldLayer 实例
     :param player: B4PlayerLayer 玩家实例（取当前位置作为出发地）
     :return: (替换后的完整输入, 移动信息dict)；取消时返回 (None, None)
-             移动信息格式：{"from": str, "to": str, "method": str}
+             移动信息格式：{"from": str, "to": str}
     """
 
     # 模式1：{移动} 或 {move} 占位符
@@ -333,10 +310,9 @@ def resolve_move_markers(raw_input: str, world_layer: B1WorldLayer, player=None)
         selected = world_layer.navigate_interactive()
         if selected is None:
             return (None, None)
-        method = _select_move_method()
         from_loc = player.player_dict.get('当前状态CurrentState', {}).get('当前所处位置', '') if player else ''
         result = raw_input[:placeholder_match.start()] + selected + raw_input[placeholder_match.end():]
-        move_info = {'from': from_loc, 'to': selected, 'method': method}
+        move_info = {'from': from_loc, 'to': selected}
         return (result, move_info)
 
     # 模式2：/move 命令（独立或带后续内容）
@@ -347,13 +323,12 @@ def resolve_move_markers(raw_input: str, world_layer: B1WorldLayer, player=None)
         selected = world_layer.navigate_interactive()
         if selected is None:
             return (None, None)
-        method = _select_move_method()
         from_loc = player.player_dict.get('当前状态CurrentState', {}).get('当前所处位置', '') if player else ''
         if suffix:
             result = f'前往{selected}，{suffix}'
         else:
             result = f'前往{selected}'
-        move_info = {'from': from_loc, 'to': selected, 'method': method}
+        move_info = {'from': from_loc, 'to': selected}
         return (result, move_info)
 
     # 无标记 → 原样返回，无移动信息

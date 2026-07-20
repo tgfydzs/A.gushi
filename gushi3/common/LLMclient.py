@@ -86,17 +86,20 @@ class LLMClient:
             return f"请求失败：{str(e)}"
 
 
-    def chat_by_context(self, context: list, label: str = ''):
+    def chat_by_context(self, context: list, label: str = '', temperature: float = None):
         """
         上下文由外部维护，最新消息放到列表最后
         :param context: 上下文列表，例：[{"role": "system", "content": use_sys}, ...]
         :param label: 调用方标识，如 N2/N3/N4/N5/N6，用于日志
+        :param temperature: 可选，覆盖模型默认温度（0.0-2.0）。None表示使用API默认值
         :return:
         """
         payload = {
             'model': self.model_name,
             'messages': context
         }
+        if temperature is not None:
+            payload['temperature'] = temperature
         t0 = time.time()
         tag = f' [{label}]' if label else ''
         try:

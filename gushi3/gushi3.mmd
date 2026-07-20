@@ -1,5 +1,5 @@
 ---
-title: 故事3 完整流水线 v4 — N1→N2→N3→[N4N5N6并行]→[N7+N8并行]→N9→循环
+title: 故事3 v5 — 主线程+后台心跳分离，N3输出决定NPC锁定
 ---
 %%{init: {'theme': 'default', 'themeVariables': {'primaryColor': '#eceff1', 'primaryTextColor': '#37474f', 'primaryBorderColor': '#90a4ae', 'lineColor': '#90a4ae', 'fontSize': '16px'}}}%%
 flowchart TB
@@ -13,6 +13,17 @@ flowchart TB
         data_player["🎮 B4PlayerLayer<br/>名称 / 状态 / 持有物 / 描述"]
         data_clock["⏰ GameClock<br/>独立模拟时间"]
         data_ctx["📝 ContextHistory ×3<br/>global(玩家可见) / event(AI用·随新事件清空)<br/>director(AI用·持久·不向玩家暴露)"]
+        data_queue["📋 DeferredQueue<br/>后台N9c产出→主循环消化<br/>线程安全队列"]
+    end
+
+    %% =========================================
+    %% N0 循环顶（消化后台 + 场景快照）
+    %% =========================================
+    subgraph N0["N0 循环顶 ✅ 纯Python"]
+        direction TB
+        n0_defer["① 消费 DeferredQueue<br/>apply_npc_delta() + sync_npc_to_lists()<br/>打印后台动态摘要"]
+        n0_look["② 展示当前场景快照<br/>'你在旧城区·街边炒粉摊<br/>在场：老板、顾客甲'"]
+        n0_done["准备就绪 → input()"]
     end
 
     %% =========================================
@@ -25,7 +36,7 @@ flowchart TB
         n1_cmds["命令处理<br/>存档: /save /load /saves /quick_save /quick_load<br/>查看: /context /npcs /player /player inv /player desc<br/>撤回: !!  /  退出: exit"]
         n1_undo["!! 撤回<br/>gc.restore(last_snapshot)<br/>+ n9_director.restore(last_n9_state)"]
         n1_move["移动标记检测<br/>resolve_move_markers()<br/>{移动} / /move"]
-        n1_nav["交互式导航 → 选移动方式<br/>B1WorldLayer.navigate_interactive()"]
+        n1_nav["交互式导航 → 选目标位置<br/>B1WorldLayer.navigate_interactive()<br/>可创建任意深度子位置"]
         n1_done["(player_input, move_info)"]
 
         n1_input --> n1_cmd
@@ -47,7 +58,7 @@ flowchart TB
         n2_new{"is_new_event?"}
         n2_yes["清空 event_context<br/>event_context.new_context()"]
         n2_no["延续事件"]
-        n2_filter["代码层防幻觉<br/>resolve_npc_name() 子串匹配<br/>'林知夏' → '林组长...林知夏（本名）'"]
+        n2_filter["代码层防幻觉<br/>resolve_npc_name() 子串匹配"]
 
         n2_input --> n2_llm --> n2_out --> n2_new
         n2_new -- "true" --> n2_yes --> n2_filter
@@ -55,40 +66,44 @@ flowchart TB
     end
 
     %% =========================================
-    %% N3 感知层
+    %% N3 感知层 + 锁定
     %% =========================================
-    subgraph N3["N3 感知层 ✅ LLM"]
+    subgraph N3_LOCK["N3 感知层 ✅ LLM → 锁定NPC"]
         direction TB
-        n3_input["输入：event_context + event_npc + related_npc<br/>+ 玩家位置 + director_context(幕后情报)"]
+        n3_input["输入：event_context + event_npc + related_npc<br/>+ 玩家位置 + director_context"]
         n3_llm["LLM判断<br/>prompt/N3_informationFiltering_sys.txt"]
         n3_event["事件涉及的npc<br/>'玩家对你说：...'"]
-        n3_related["事件涉及/潜在npc<br/>'玩家对[名]说：...'"]
+        n3_related["事件涉及/潜在npc"]
         n3_ground["地段传播<br/>{msg, level, mask}"]
+
+        n3_lock["③ N3输出决定本轮锁定NPC<br/>event_npc + related_npc = locked_set<br/>这些NPC进入N4N5N6流水线<br/>未锁定NPC跳过N4N5N6"]
 
         n3_input --> n3_llm
         n3_llm --> n3_event & n3_related & n3_ground
+        n3_event --> n3_lock
+        n3_related --> n3_lock
     end
 
     %% =========================================
-    %% N4→N5→N6 并行
+    %% N4→N5→N6 仅锁定NPC
     %% =========================================
-    subgraph NPC_PIPE["⚡ N4→N5→N6 并行 ThreadPoolExecutor(max_workers=6)"]
+    subgraph NPC_PIPE["⚡ N4→N5→N6 仅锁定NPC ThreadPoolExecutor"]
         direction TB
-        npipe_tasks["组装 tasks：event_npc(打印回应) + related_npc(静默)<br/>每NPC一条独立流水线"]
+        npipe_tasks["仅 locked_set 中的NPC入流水线<br/>其他NPC不生成回应"]
         npipe_pool["并行提交 gc.process_npc_pipeline()"]
 
         subgraph N4["N4 推理层 ✅ LLM"]
             n4_llm["reason_for_npc()<br/>prompt/N4_reasoning_sys<br/>更新待解释事件表"]
         end
         subgraph N5["N5 回应层 ✅ LLM"]
-            n5_llm["response_say()<br/>prompt/N5_response_sys<br/>不接受玩家实例，产出回应+内心想法"]
+            n5_llm["response_say()<br/>prompt/N5_response_sys<br/>产出回应+内心想法"]
         end
         subgraph N6["N6 更新层 ✅ LLM"]
-            n6_llm["update_for_npc()<br/>prompt/N6_update_sys<br/>唯一接受玩家实例<br/>产出delta增量 + strip_empty_delta()"]
+            n6_llm["update_for_npc()<br/>prompt/N6_update_sys<br/>唯一接受玩家实例<br/>产出delta增量"]
         end
         subgraph MERGE["合并"]
             merge_delta["merge_delta() 合并多NPC的玩家增量<br/>apply_player_delta() 写回玩家"]
-            merge_sync["sync_npc_to_lists()<br/>更新后NPC同步到 event_npc + all_npc_list"]
+            merge_sync["sync_npc_to_lists()<br/>更新后NPC同步到列表"]
         end
 
         npipe_tasks --> npipe_pool --> N4 --> N5 --> N6
@@ -98,134 +113,114 @@ flowchart TB
     %% =========================================
     %% N7 + N8 并行
     %% =========================================
-    subgraph N7N8["⏱️ N7+N8 并行 ThreadPoolExecutor(max_workers=2)"]
+    subgraph N7N8["⏱️ N7+N8 并行"]
         direction LR
         subgraph N7["N7 传播层 ✅ 纯规则"]
-            n7_in["输入：N3地段传播 {msg,level,mask}<br/>亲历NPC名单 / 玩家位置"]
-            n7_calc["LCA距离 → level确定层级<br/>mask概率 → 随机筛选"]
-            n7_out["输出：{NPC名: ['(传闻)消息']}<br/>写入NPC.observation · 排除亲历者"]
-            n7_in --> n7_calc --> n7_out
+            n7_in["N3地段传播 {msg,level,mask}"]
+            n7_calc["LCA距离 → level决定层级<br/>mask概率 → 随机筛选"]
+            n7_out["写入NPC.observation"]
         end
-        subgraph N8["N8 时间层 ✅ 规则+LLM"]
-            n8_disp{"移动?"}
-            n8_rule["规则：segments×15min×系数<br/>步行1.0 跑步0.5 电动车0.4 公交0.3"]
-            n8_llm_ability["LLM：读上下文判断意图<br/>逃命/显圣/隐藏<br/>prompt/N8_time_ability_sys"]
-            n8_llm_dialogue["LLM：读对话估算<br/>prompt/N8_time_dialogue_sys"]
+        subgraph N8["N8 时间层 ✅ 纯LLM"]
+            n8_move{"有移动?"}
+            n8_llm["LLM统一判断耗时<br/>prompt/N8_time_ability_sys<br/>含移动/对话/玩家声明时间"]
             n8_advance["game_clock.advance()"]
-            n8_disp -- "常规移动" --> n8_rule --> n8_advance
-            n8_disp -- "异能移动" --> n8_llm_ability --> n8_advance
-            n8_disp -- "无移动" --> n8_llm_dialogue --> n8_advance
+            n8_move -- "是" --> n8_llm
+            n8_move -- "否" --> n8_llm
+            n8_llm --> n8_advance
         end
     end
 
     %% =========================================
-    %% N9 导演层
+    %% N9a + N9b 主线程（N9c移至后台）
     %% =========================================
-    subgraph N9["🎬 N9 导演层 ✅ LLM · 每轮最后"]
+    subgraph N9_MAIN["🎬 N9a + N9b 主线程 并行"]
+        direction LR
+        subgraph N9a["N9a 规则触发 ✅ LLM"]
+            n9a_input["世界规则列表 / 当前状态 / 已触发规则<br/>玩家 / 事件摘要 / 导演历史"]
+            n9a_llm["LLM判断<br/>prompt/N9a_rule_sys<br/>温度0.3"]
+            n9a_out["规则触发 → 改世界状态<br/>🟢打印 + 🔴director_context"]
+        end
+        subgraph N9b["N9b 环境叙事 ✅ LLM"]
+            n9b_input["位置 / 时间 / 世界状态 / 最近叙事"]
+            n9b_llm["LLM写作<br/>prompt/N9b_narration_sys<br/>温度0.9"]
+            n9b_out["0-1条旁白 → 打印 + global_context"]
+        end
+    end
+
+    %% =========================================
+    %% 后台心跳（独立线程）
+    %% =========================================
+    subgraph HEARTBEAT["⚡ 后台世界心跳 (独立线程)"]
         direction TB
 
-        subgraph N9_IN["📥 输入组装"]
-            direction LR
-            n9in_rules["世界演变规则列表"]
-            n9in_state["当前世界状态列表"]
-            n9in_trig["已触发规则 {序号:进度}"]
-            n9in_time["当前游戏时间"]
-            n9in_player["玩家 {名称,位置,实力}"]
-            n9in_events["最近事件摘要(5轮)"]
-            n9in_dir["导演历史(director_context)"]
-            n9in_resp["NPC回应摘要(前80字×5)"]
-            n9in_n7["N7传播结果"]
-            n9in_narr["最近环境叙事 + 已叙述主题"]
+        hb_cond{"触发条件"}
+        hb_cond_detail["• 主循环每完成3轮触发一次<br/>• 累计游戏时间推进 >= 12小时触发一次<br/>• 玩家连续N分钟无输入（N可配，默认关闭）"]
+        hb_cond --> hb_cond_detail
+
+        hb_filter["① 规则过滤器（纯Python·微秒级）<br/>遍历全部NPC，逐NPC判断：<br/>有活跃目标且距上次推进>5轮？<br/>所在区域最近有世界状态变化？<br/>N7传播最近到达了ta？<br/>→ 以上都不是 → 跳过（日常不处理）"]
+
+        hb_group["② 分组器<br/>按location前缀分组<br/>每队上限5个NPC<br/>每组一个独立N9c调用"]
+
+        subgraph N9c["N9c NPC行为+传播 ✅ LLM × N组并行"]
+            n9c_llm["每组一个LLM调用<br/>prompt/N9c_behavior_sys<br/>温度0.6<br/>ThreadPoolExecutor(max_workers=6)"]
+            n9c_out["输出NPC增量delta<br/>→ 推入 DeferredQueue<br/>主循环N0时消化"]
         end
 
-        n9_llm["LLM判断<br/>prompt/N9_director_sys.txt"]
+        hb_filter -- "候审NPC" --> hb_group --> n9c_llm --> n9c_out
 
-        subgraph N9_FILTER["🛡️ 代码层防幻觉 + 主题追踪"]
-            n9f1["① 规则原文 ∈ 规则列表?<br/>过滤幻觉规则"]
-            n9f2["② 规则序号 ∉ triggered_rules?<br/>防重复触发"]
-            n9f3["③ resolve_npc_name() 子串+纯名匹配<br/>'赵铁手(本名)'→'赵工...赵铁手(黑户社区)'"]
-            n9f4["④ 更新缓存<br/>triggered_rules + recent_narrations + narrated_themes"]
-        end
-
-        subgraph N9_OUT["📤 四路输出 · 按可见性分层"]
-            direction LR
-            n9o1["① 规则触发<br/>🟢玩家可见叙述 → 打印+global_context<br/>🔴幕后详情 → director_context<br/>状态变更 → 世界状态列表"]
-            n9o2["② 环境叙事(0-1条)🟢<br/>→ 灰字打印·小点前缀<br/>→ global_context<br/>主题追踪防重复"]
-            n9o3["③ NPC自主行为(0-3个)🔴<br/>→ NPC.observation<br/>→ director_context"]
-            n9o4["④ 剧情级传播(0-2条)🔴<br/>→ 到达NPC.observation<br/>→ director_context"]
-        end
-
-        N9_IN --> n9_llm --> N9_FILTER
-        n9f1 --> n9f2 --> n9f3 --> n9f4 --> N9_OUT
+        hb_result["③ 队列等待主循环消化<br/>不碰任何NPC实例<br/>零竞态"]
     end
 
     %% =========================================
     %% 主流程连线
     %% =========================================
+    n0_done --> N1
     n1_done --> N2
-    N2 --> N3
-    N3 --> NPC_PIPE
+    N2 --> N3_LOCK
+    n3_lock --> NPC_PIPE
     NPC_PIPE --> N7N8
-    N7N8 --> N9
-    N9 --> LOOP["🔄 回到N1"]
+    N7N8 --> N9_MAIN
+    N9_MAIN --> LOOP["🔄 回到N0（循环顶）"]
 
-    N9_OUT -. "③④ 幕后信息" .-> DIRCTX["📋 director_context<br/>持久·不随事件清空<br/>玩家不可见<br/>/context director 可查(调试)"]
-    DIRCTX -. "下轮输入" .-> N2
-    DIRCTX -.-> N3
-    DIRCTX -.-> N9
+    LOOP --> n0_defer
+
+    %% 未锁定NPC跳过N4N5N6直接到N7
+    n3_lock -.->|"未锁定NPC跳过N4N5N6"| N7N8
+
+    %% 后台心跳连线
+    hb_cond -.-> hb_filter
+    n9c_out -.->|"deferred_queue.put()"| data_queue
+    data_queue -.->|"deferred_queue.get()"| n0_defer
+
+    %% 导演上下文回流
+    N9a -.->|"幕后详情"| DIRCTX["📋 director_context<br/>持久·不随事件清空"]
+    N9a -.->|"世界事件"| N9b
+    DIRCTX -.-> N2
+    DIRCTX -.-> N3_LOCK
+    DIRCTX -.-> N9a
 
     %% =========================================
-    %% 存档持久化
+    %% 存档
     %% =========================================
-    subgraph SAVE["💾 存档系统 ✅"]
-        direction LR
-        sv_snap["gc.snapshot()<br/>上下文/NPC/玩家/世界/时钟"]
-        sv_n9["n9_director.to_dict() → gc._n9_state<br/>含 triggered_rules / narrations / themes"]
-        sv_save["build_save_state()<br/>JSON + 日志"]
-        sv_load["rebuild_game_state()<br/>+ n9_director.restore()"]
-    end
-    N9 -.-> sv_n9 --> sv_save
-
-    %% =========================================
-    %% 工具函数
-    %% =========================================
-    subgraph TOOLS["🔧 公共工具 common/small_tool.py"]
-        direction LR
-        t1["resolve_npc_name()<br/>3级匹配：精确→子串→纯名(括号前)"]
-        t2["safe_json_loads()<br/>剥离markdown·降级解析"]
-        t3["strip_empty_delta()<br/>清除LLM空增量"]
-        t4["resolve_move_markers()<br/>移动标记→导航→方式选择"]
-        t5["merge_delta()/apply_player_delta()<br/>增量合并"]
+    subgraph SAVE["💾 存档系统"]
+        sv_snap["gc.snapshot() → 后台线程写入<br/>不阻塞主循环"]
     end
 
     %% =========================================
     %% 样式
     %% =========================================
+    style N0 fill:#f0faf0,stroke:#81c784,color:#333
     style N1 fill:#f0faf0,stroke:#81c784,color:#333
     style N2 fill:#f0f5ff,stroke:#64b5f6,color:#333
-    style N3 fill:#fff8f0,stroke:#ffb74d,color:#333
+    style N3_LOCK fill:#fff8f0,stroke:#ffb74d,color:#333
     style N4 fill:#fff0f3,stroke:#e57373,color:#333
     style N5 fill:#faf0fa,stroke:#ba68c8,color:#333
     style N6 fill:#f0fafa,stroke:#4db6ac,color:#333
     style N7 fill:#fffff0,stroke:#fff176,color:#333
     style N8 fill:#f5f5ff,stroke:#7986cb,color:#333
-    style N9 fill:#fff5f5,stroke:#ef9a9a,color:#333
+    style N9a fill:#fff5f5,stroke:#ef9a9a,color:#333
+    style N9b fill:#fff5f5,stroke:#ef9a9a,color:#333
+    style N9c fill:#f5f0ff,stroke:#ab47bc,color:#333
+    style HEARTBEAT fill:#f3e5f5,stroke:#ab47bc,color:#333
     style DATA fill:#fafafa,stroke:#bdbdbd,color:#333
     style SAVE fill:#f8f8f8,stroke:#9e9e9e,color:#333
-    style TOOLS fill:#f5f5f5,stroke:#bdbdbd,color:#333
-
-    %% =========================================
-    %% 层级速查
-    %% =========================================
-    subgraph LEGEND["📋 层级速查表"]
-        direction LR
-        L1["N1 输入 → 命令/移动"]
-        L2["N2 事件 → LLM·新事件判断"]
-        L3["N3 感知 → LLM·信息分发"]
-        L4["N4 推理 → LLM·NPC思考"]
-        L5["N5 回应 → LLM·NPC说话"]
-        L6["N6 更新 → LLM·增量落地"]
-        L7["N7 传播 → 规则·位置树谣言"]
-        L8["N8 时间 → 规则+LLM·推进"]
-        L9["N9 导演 → LLM·暗线推动"]
-    end
