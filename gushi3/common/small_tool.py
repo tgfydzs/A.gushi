@@ -3,13 +3,57 @@ import os
 import re
 from copy import deepcopy
 from typing import Dict, Any, List
+from functools import lru_cache
 
 from Schema.B1_worldState_sch import B1WorldLayer
 from Schema.B3_npclist_sch import B3NPCListLayer
 from Schema.B3_1_npc_sch import B3NPCLayer
 from common.log import get_logger
+from common.base_cnf import BASE_PATH
 
 logger = get_logger("small_tool")
+
+
+# ===================== Prompt 加载（客制化占位符替换） =====================
+
+_LAYER_PROMPT_MAP = {
+    'N3_informationFiltering_sys.txt': 'N3',
+    'N5_response_sys.txt': 'N5',
+    'N6_update_sys.txt': 'N6',
+    'N6_player_sys.txt': 'N6_player',
+    'N9b_narration_sys.txt': 'N9b',
+    'N9c_behavior_sys.txt': 'N9c',
+}
+
+
+@lru_cache(maxsize=32)
+def load_prompt(filename: str) -> str:
+    """
+    读取 prompt 文件并替换客制化占位符。
+
+    从 prompt/{filename} 读取原始文本，
+    查找对应的 data/prompt/{layer}_custom/ 目录，
+    将 {占位符} 替换为同名的 .md 文件内容。
+
+    :param filename: prompt 文件名，如 'N3_informationFiltering_sys.txt'
+    :return: 替换后的完整 prompt 文本
+    """
+    with open(os.path.join(BASE_PATH, 'prompt', filename), 'r', encoding='utf-8') as f:
+        text = f.read()
+
+    layer = _LAYER_PROMPT_MAP.get(filename)
+    if layer:
+        custom_dir = os.path.join(BASE_PATH, 'data', 'prompt', f'{layer}_custom')
+        if os.path.isdir(custom_dir):
+            placeholders = re.findall(r'\{(\w+)\}', text)
+            for ph in placeholders:
+                md_path = os.path.join(custom_dir, f'{ph}.md')
+                if os.path.isfile(md_path):
+                    with open(md_path, 'r', encoding='utf-8') as f_md:
+                        text = text.replace(f'{{{ph}}}', f_md.read().strip())
+                        logger.debug(f'prompt占位符替换: {filename} → {ph}.md')
+
+    return text
 
 
 def safe_json_loads(text: str, label: str = "") -> dict:
@@ -37,7 +81,20 @@ def safe_json_loads(text: str, label: str = "") -> dict:
     except json.JSONDecodeError:
         pass
 
-    # 3. 降级：允许控制字符
+    # 3. 截断到最后一个 } 或 ]（处理LLM在JSON后追加额外文本）
+    for bracket in ('}', ']'):
+        idx = raw.rfind(bracket)
+        if idx != -1:
+            candidate = raw[:idx + 1]
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                try:
+                    return json.loads(candidate, strict=False)
+                except json.JSONDecodeError:
+                    pass
+
+    # 4. 降级：允许控制字符
     try:
         return json.loads(raw, strict=False)
     except json.JSONDecodeError as e:
@@ -251,7 +308,7 @@ def load_json_to_dict(file_path: str) -> Dict[str, Any]:
         logger.warn(f"文件不存在：{file_path}")
         raise FileNotFoundError(f"文件不存在：{file_path}")
     except json.JSONDecodeError:
-        logger.warn("{file_path} 不是合法JSON文件，解析失败")
+        logger.warn(f"{file_path} 不是合法JSON文件，解析失败")
         raise ValueError(f"{file_path} 不是合法JSON文件，解析失败")
 
 

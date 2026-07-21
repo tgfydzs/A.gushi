@@ -6,6 +6,22 @@ from common.base_cnf import *
 from common.log import get_logger
 _llm_log = get_logger("LLM")
 
+# 重试配置
+_MAX_RETRIES = 3
+_RETRY_BACKOFF_SECONDS = [1, 3, 8]
+_RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+
+
+def _is_retryable(e: Exception) -> bool:
+    """判断异常是否可重试（网络/超时/限流/服务端错误）"""
+    if isinstance(e, requests.ConnectionError):
+        return True
+    if isinstance(e, requests.Timeout):
+        return True
+    if isinstance(e, requests.HTTPError):
+        return e.response.status_code in _RETRYABLE_STATUSES
+    return False
+
 # ================== 模型基础配置 ======================
 # 默认系统提示词
 DEFAULT_SYSTEM_PROMPT = "你是专业智能助手，回答简洁准确，逻辑清晰"
@@ -67,23 +83,32 @@ class LLMClient:
         }
 
         t0 = time.time()
-        try:
-            resp = requests.post(
-                url=self.base_url,
-                headers=self.headers,
-                json=payload,
-                timeout=90
-            )
-            elapsed = time.time() - t0
-            _llm_log.info(f"chat({self.model_name}) 请求完成，耗时 {elapsed:.1f}s")
-            resp.raise_for_status()
-            res_data = resp.json()
-            reply = res_data["choices"][0]["message"]["content"].strip()
-            return reply
-        except Exception as e:
-            elapsed = time.time() - t0
-            _llm_log.error(f"chat 请求失败(耗时{elapsed:.1f}s)：{str(e)}")
-            return f"请求失败：{str(e)}"
+        last_err = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                resp = requests.post(
+                    url=self.base_url,
+                    headers=self.headers,
+                    json=payload,
+                    timeout=90
+                )
+                elapsed = time.time() - t0
+                _llm_log.info(f"chat({self.model_name}) 请求完成，耗时 {elapsed:.1f}s")
+                resp.raise_for_status()
+                res_data = resp.json()
+                reply = res_data["choices"][0]["message"]["content"].strip()
+                return reply
+            except Exception as e:
+                last_err = e
+                elapsed = time.time() - t0
+                if attempt < _MAX_RETRIES - 1 and _is_retryable(e):
+                    backoff = _RETRY_BACKOFF_SECONDS[attempt]
+                    _llm_log.warn(f"chat 第{attempt+1}次失败(耗时{elapsed:.1f}s)，{backoff}s后重试：{str(e)}")
+                    time.sleep(backoff)
+                else:
+                    _llm_log.error(f"chat 请求失败(耗时{elapsed:.1f}s)：{str(e)}")
+                    return f"请求失败：{str(e)}"
+        return f"请求失败：{str(last_err)}"
 
 
     def chat_by_context(self, context: list, label: str = '', temperature: float = None):
@@ -102,23 +127,32 @@ class LLMClient:
             payload['temperature'] = temperature
         t0 = time.time()
         tag = f' [{label}]' if label else ''
-        try:
-            resp = requests.post(
-                url=self.base_url,
-                headers=self.headers,
-                json=payload,
-                timeout=90
-            )
-            elapsed = time.time() - t0
-            _llm_log.info(f"chat_by_context({self.model_name}){tag} 请求完成，耗时 {elapsed:.1f}s")
-            resp.raise_for_status()
-            res_data = resp.json()
-            reply = res_data["choices"][0]["message"]["content"].strip()
-            return reply
-        except Exception as e:
-            elapsed = time.time() - t0
-            _llm_log.error(f"chat_by_context({self.model_name}){tag} 请求失败(耗时{elapsed:.1f}s)：{str(e)}")
-            return f'请求失败{str(e)}'
+        last_err = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                resp = requests.post(
+                    url=self.base_url,
+                    headers=self.headers,
+                    json=payload,
+                    timeout=90
+                )
+                elapsed = time.time() - t0
+                _llm_log.info(f"chat_by_context({self.model_name}){tag} 请求完成，耗时 {elapsed:.1f}s")
+                resp.raise_for_status()
+                res_data = resp.json()
+                reply = res_data["choices"][0]["message"]["content"].strip()
+                return reply
+            except Exception as e:
+                last_err = e
+                elapsed = time.time() - t0
+                if attempt < _MAX_RETRIES - 1 and _is_retryable(e):
+                    backoff = _RETRY_BACKOFF_SECONDS[attempt]
+                    _llm_log.warn(f"chat_by_context{tag} 第{attempt+1}次失败(耗时{elapsed:.1f}s)，{backoff}s后重试：{str(e)}")
+                    time.sleep(backoff)
+                else:
+                    _llm_log.error(f"chat_by_context({self.model_name}){tag} 请求失败(耗时{elapsed:.1f}s)：{str(e)}")
+                    return f'请求失败{str(e)}'
+        return f'请求失败{str(last_err)}'
 
 
 

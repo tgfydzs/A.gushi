@@ -10,7 +10,7 @@ from copy import deepcopy
 from common.log import get_logger
 from common import log as log_mod
 from common.save_load import SaveManager
-from common.base_cnf import BASE_PATH, SAVE_ROOT_PATH, SAVE_VERSION, WORLD_DATA_FILE, WORLD_DATA_SELECT, NPC_DATA_ROOT_PATH, PLAYER_DATA_FILE
+from common.base_cnf import BASE_PATH, SAVE_ROOT_PATH, SAVE_VERSION, WORLD_DATA_FILE, WORLD_DATA_SELECT, NPC_DATA_ROOT_PATH
 from common.small_tool import load_json_to_dict, walk_category_files, load_npc_list_from_json, apply_npc_delta, strip_empty_delta
 from common import time_int
 from common.game_clock import GameClock
@@ -87,7 +87,7 @@ class GameController:
         logger.info(f'⏰ 游戏时钟启动 → {start_time}（格式：{time_fmt}）')
 
     def init_all_npcs(self):
-        """从 data/B3_npc 加载所有NPC"""
+        """从 data/B3_npc 加载所有NPC，并用世界配置覆盖截断上限"""
         npc_source_path = os.path.join(BASE_PATH, NPC_DATA_ROOT_PATH)
         npc_file_list = walk_category_files(npc_source_path)
         logger.debug(f'读取的npc文件列表{npc_file_list}')
@@ -96,11 +96,24 @@ class GameController:
             file_npcs = load_npc_list_from_json(npc_file)
             for npc in file_npcs:
                 self.all_npc_list.add(npc)
-        logger.debug(f'取到npc数量:{len(self.all_npc_list)}')
+
+        # 从世界配置覆盖NPC截断上限
+        from Schema.B3_1_npc_sch import B3NPCLayer
+        obs_max = self.b1WorldLayer.get_config('NPC_观察上限')
+        if obs_max is not None:
+            B3NPCLayer.MAX_OBSERVATION = obs_max
+        mem_max = self.b1WorldLayer.get_config('NPC_记忆上限')
+        if mem_max is not None:
+            B3NPCLayer.MAX_MEMORY = mem_max
+        pend_max = self.b1WorldLayer.get_config('NPC_待推理上限')
+        if pend_max is not None:
+            B3NPCLayer.MAX_PENDING = pend_max
+        logger.debug(f'取到npc数量:{len(self.all_npc_list)}, 截断上限: obs={B3NPCLayer.MAX_OBSERVATION} mem={B3NPCLayer.MAX_MEMORY} pend={B3NPCLayer.MAX_PENDING}')
 
     def init_player(self):
-        """加载玩家数据"""
-        current_state = load_json_to_dict(os.path.join(BASE_PATH, PLAYER_DATA_FILE))
+        """加载玩家数据（优先从世界配置读取玩家文件路径）"""
+        player_file = self.b1WorldLayer.get_config('玩家初始数据', 'data/player/default.json')
+        current_state = load_json_to_dict(os.path.join(BASE_PATH, player_file))
         self.player = B4PlayerLayer(current_state)
 
     # ===================== 小工具 =====================
@@ -302,7 +315,12 @@ class GameController:
         返回 (有行动的NPC名字列表, 传播条数)
         """
         acted_names = []
-        valid_names = None  # 不需要了，get_npc 自带括号剥离
+        capped: set[str] = set()  # 追踪已截断的NPC，避免重复调用
+
+        def _maybe_cap(npc) -> None:
+            if npc.name not in capped:
+                npc.cap_fields()
+                capped.add(npc.name)
 
         npc_actions = msg.get('NPC自主行为', {}) or {}
         for npc_name, action_data in npc_actions.items():
@@ -327,6 +345,7 @@ class GameController:
                     npc.observation.append(obs_entry)
                 acted_names.append(npc.name)
                 logger.info(f'📦 [{npc.name}] {action_text}')
+            _maybe_cap(npc)
 
         spread_count = 0
         for spread in (msg.get('剧情级传播', []) or []):
@@ -338,6 +357,7 @@ class GameController:
                     obs_entry = f'（情报·{method}）{info}'
                     if obs_entry not in npc.observation:
                         npc.observation.append(obs_entry)
+                    _maybe_cap(npc)
             spread_count += 1
 
         return acted_names, spread_count

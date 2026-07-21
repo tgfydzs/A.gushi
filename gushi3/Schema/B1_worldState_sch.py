@@ -21,6 +21,28 @@ class B1WorldLayer:
         """读取游戏开始时间，默认 2026-07-19 18:00"""
         return self.dict.get('游戏开始时间', '2026-07-19 18:00')
 
+    # ===================== 世界配置读取（数据驱动） =====================
+
+    def get_config(self, key: str, default=None):
+        """
+        读取世界配置项。
+
+        从 world_dict['世界配置'] 中获取配置值，不存在则返回 default。
+        通过统一入口读取，配置变更只需改 data/ 下的 JSON 文件。
+
+        当前可用配置项：
+            NPC_附近距离_段    — 附近NPC距离阈值（add_npc用）
+            NPC_关联距离_段    — 关联NPC距离阈值（add_related_npc用）
+            事件_最小上下文长度 — 新事件判断防死循环的最小上下文条数
+            心跳间隔_小时      — 后台心跳触发间隔（游戏时间）
+            NPC_观察上限       — NPC Observation 表最大条数
+            NPC_记忆上限       — NPC Memory 表最大条数
+            NPC_待推理上限     — NPC PendingReasoning 表最大条数
+            玩家初始数据       — 玩家JSON文件路径
+        """
+        config = self.dict.get('世界配置', {})
+        return config.get(key, default)
+
     # ===================== 位置查询与路径工具 =====================
 
     def get_location_tree(self) -> dict:

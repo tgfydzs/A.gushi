@@ -19,5 +19,5 @@ class B4PlayerLayer:
     """
 
     def __init__(self, player_dict: dict):
-        self.player_dict = player_dict
+        self.player_dict = dict(player_dict)  # 深拷贝防止修改入参
         self.player_dict.pop('备注', None)

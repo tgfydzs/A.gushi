@@ -1,7 +1,7 @@
 import os
 
 BASE_PATH = r'E:\A.gushi\gushi3'
-DEBUG_MODE = True
+DEBUG_MODE = False  # 调试快照开关，运行中可用 /debug 切换
 
 
 
@@ -9,7 +9,7 @@ DEBUG_MODE = True
 # ----------------- 日志 ---------------------
 LOG_PATH = r'log\N3.log'
 LOG_FILE_LEVEL = 20 #日志文件记录等级
-LOG_CONSOLE_LEVEL = 40 #控制台打印等级（40=ERROR，30=WARNING）
+LOG_CONSOLE_LEVEL = 30 #控制台打印等级（40=ERROR，30=WARNING）
 
 
 # ---------------- 数据驱动 ----------------------
@@ -17,8 +17,6 @@ WORLD_DATA_FILE = r'data\B1_worldState\global.json'
 WORLD_DATA_SELECT = '苍云大陆·仙途诡道'
 
 NPC_DATA_ROOT_PATH = r'data\B3_npc'
-
-PLAYER_DATA_FILE = r'data\player\叶尘.json'
 
 SAVE_ROOT_PATH = r'save'    # 存档根目录
 SAVE_VERSION = 1            # 存档格式版本号，Schema 变更时递增

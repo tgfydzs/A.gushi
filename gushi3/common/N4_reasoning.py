@@ -1,4 +1,4 @@
-import os
+import json
 
 from Schema.B3_1_npc_sch import B3NPCLayer
 from common.log import get_logger
@@ -27,8 +27,7 @@ class N4_Reasoning:
         :param perception_msg: N3感知层分发的带方向消息
         :return: 更新后的B3NPCLayer
         """
-        with open(os.path.join(BASE_PATH, r'prompt\N4_reasoning_sys.txt'), 'r', encoding='utf-8') as f:
-            sys_prompt = f.read()
+        sys_prompt = load_prompt('N4_reasoning_sys.txt')
 
         all_context = [{'role': 'system', 'content': sys_prompt}]
         user_input = {
@@ -43,6 +42,16 @@ class N4_Reasoning:
         self.logger.info(f'推理结果：{json_replay}')
 
         npc_delta = json_replay.get('npc实例', {})
+
+        # 代码层防护：N4只允许修改PendingReasoning，过滤LLM越权修改其他字段
+        _N4_ALLOWED_FIELDS = {'待解释事件PendingReasoning'}
+        for section in ('增加', '删减'):
+            sec = npc_delta.get(section, {})
+            for field in list(sec.keys()):
+                if field not in _N4_ALLOWED_FIELDS:
+                    self.logger.warn(f'N4 拦截越权字段 [{field}]（N4只允许修改PendingReasoning）')
+                    del sec[field]
+
         new_npc_inst = apply_npc_delta(npc_inst, npc_delta)
 
         # 去重：LLM可能重复追加相同的pending条目，Python侧兜底

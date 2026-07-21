@@ -99,6 +99,24 @@ sync_npc_to_lists() 同步更新后的NPC到NPC列表
 
 N7（传播层，纯规则零耗时）和 N8（时间层，可能有LLM调用）通过 `ThreadPoolExecutor(max_workers=2)` 并行。
 
+### 数据驱动架构
+
+所有可变的数值/名称/行为参数均从 `data/B1_worldState/global.json` 的世界配置（`世界配置` 节）读取：
+
+| 配置项 | 代码中读取方式 | 默认值 |
+|--------|--------------|--------|
+| `NPC_附近距离_段` | `b1WorldLayer.get_config('NPC_附近距离_段', 3)` | 3 |
+| `NPC_关联距离_段` | `b1WorldLayer.get_config('NPC_关联距离_段', 8)` | 8 |
+| `事件_最小上下文长度` | `b1WorldLayer.get_config('事件_最小上下文长度', 2)` | 2 |
+| `心跳间隔_小时` | `world_layer.get_config('心跳间隔_小时', 12)` | 12 |
+| `NPC_观察上限` | B3NPCLayer.MAX_OBSERVATION (init时覆盖) | 20 |
+| `NPC_记忆上限` | B3NPCLayer.MAX_MEMORY | 30 |
+| `NPC_待推理上限` | B3NPCLayer.MAX_PENDING | 10 |
+| `玩家初始数据` | `b1WorldLayer.get_config('玩家初始数据', 'data/player/default.json')` | 由世界配置决定 |
+
+新增配置项只需在 global.json 的 `世界配置` 中添加键值对，代码中通过 `get_config(key, default)` 读取。
+已有默认兜底，新增配置项不会破坏现有世界。
+
 ### N9 导演层（三路并行）
 
 N9 拆分为三个独立的 LLM 调用，通过 `ThreadPoolExecutor(max_workers=3)` 并行执行，总耗时≈最慢子任务：
@@ -198,7 +216,6 @@ gushi3/
 │   ├── N6_update_sys.txt
 │   ├── N6_player_sys.txt
 │   ├── N8_time_ability_sys.txt
-│   ├── N8_time_dialogue_sys.txt
 │   ├── N9a_rule_sys.txt          ← 规则触发（低温度）
 │   ├── N9b_narration_sys.txt     ← 环境叙事（高温度）
 │   └── N9c_behavior_sys.txt      ← NPC行为+情报传播（中温度）

@@ -1,5 +1,4 @@
 import os
-from datetime import datetime, timezone
 from common.base_cnf import *
 
 # ===================== 快照目录 =====================
@@ -145,7 +144,7 @@ def snapshot_scene(round_num: int, label: str, gc):
         'global_context_count': gc.global_context.count if gc.global_context else 0,
         'event_context_count': gc.event_context.count if gc.event_context else 0,
         'world_state_list': gc.b1WorldLayer.dict.get('世界状态列表', []),
-        'triggered_rules_len': len(getattr(getattr(gc, '_n9_state', {}), 'triggered_rules', {})),
+        'triggered_rules_len': len(getattr(gc, '_n9_state', {}).get('triggered_rules', {})),
     }
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)

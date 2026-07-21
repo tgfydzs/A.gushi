@@ -4,12 +4,9 @@ N9 导演层 — 三个独立子任务。
 """
 
 import json
-import os
-from concurrent.futures import ThreadPoolExecutor
 
 from common.log import get_logger
-from common.small_tool import safe_json_loads
-from common.base_cnf import BASE_PATH
+from common.small_tool import *
 from common.LLMclient import LLMClient
 
 
@@ -19,8 +16,6 @@ class N9_Director:
     TEMPERATURE_RULE = 0.3        # N9a：规则判定 → 低温度
     TEMPERATURE_NARRATION = 0.9   # N9b：创意写作 → 高温度
     TEMPERATURE_BEHAVIOR = 0.6    # N9c：调度型 → 中温度
-
-    MIN_RULE_INTERVAL_MINUTES = 10080  # 7天
 
     def __init__(self, logger=None):
         self.logger = logger if logger else get_logger('N9_Director')
@@ -38,60 +33,13 @@ class N9_Director:
 
     def run_rules(self, world_rules, world_state_list, event_summary,
                   dc_trimmed, time_str, player_name, player_loc, player_power) -> dict:
-        """N9a：规则触发，返回原始LLM结果"""
-        # 时间间隔检查（硬防护）
-        current_elapsed = 0
-        try:
-            current_elapsed = int(time_str.split('·')[0]) if '·' in time_str else 0
-        except Exception:
-            pass
-        if self._last_rule_trigger_elapsed > 0:
-            if current_elapsed - self._last_rule_trigger_elapsed < self.MIN_RULE_INTERVAL_MINUTES:
-                self.logger.info('N9a 规则触发跳过（时间间隔不足7天）')
-                return {'规则触发': []}
-
+        """N9a：规则触发，返回原始LLM结果（触发节奏由心跳时间间隔控制）"""
         return self._process_rules(world_rules, world_state_list, event_summary,
                                    dc_trimmed, time_str, player_name, player_loc, player_power)
 
     def run_narration(self, player_loc, time_str, world_state_list, event_summary) -> list:
         """N9b：环境叙事，返回原始LLM结果"""
         return self._process_narration(player_loc, time_str, world_state_list, event_summary)
-
-    def run_behavior(self, all_npc_names, event_summary, dc_trimmed,
-                     npc_responses, n7_result, world_state_list) -> dict:
-        """N9c：NPC行为+传播，返回原始LLM结果"""
-        return self._process_behavior(all_npc_names, event_summary, dc_trimmed,
-                                      npc_responses, n7_result, world_state_list)
-
-    def run_all(self, world_rules, world_state_list, event_summary,
-                dc_trimmed, time_str, player_name, player_loc, player_power,
-                all_npc_names, npc_responses, n7_result) -> dict:
-        """三条并行，返回合并后的原始结果，不落地副作用"""
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            fut_a = pool.submit(
-                self.run_rules,
-                world_rules, world_state_list, event_summary,
-                dc_trimmed, time_str, player_name, player_loc, player_power,
-            )
-            fut_b = pool.submit(
-                self.run_narration,
-                player_loc, time_str, world_state_list, event_summary,
-            )
-            fut_c = pool.submit(
-                self.run_behavior,
-                all_npc_names, event_summary, dc_trimmed,
-                npc_responses, n7_result, world_state_list,
-            )
-            rule_result = fut_a.result()
-            narration_result = fut_b.result()
-            behavior_result = fut_c.result()
-
-        return {
-            '规则触发': rule_result.get('规则触发', []),
-            '环境叙事': narration_result if isinstance(narration_result, list) else [],
-            'NPC自主行为': behavior_result.get('NPC自主行为', {}) or {},
-            '剧情级传播': behavior_result.get('剧情级传播', []) or [],
-        }
 
     # ===================== N9a =====================
 
@@ -154,8 +102,7 @@ class N9_Director:
 
     @staticmethod
     def _load_prompt(filename: str) -> str:
-        with open(os.path.join(BASE_PATH, 'prompt', filename), 'r', encoding='utf-8') as f:
-            return f.read()
+        return load_prompt(filename)
 
     def _llm_call(self, sys_prompt: str, user_input: dict, temperature: float, label: str):
         all_context = [

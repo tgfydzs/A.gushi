@@ -1,4 +1,4 @@
-import os
+import json
 
 from Schema.B3_1_npc_sch import B3NPCLayer
 from Schema.B4_player_sch import B4PlayerLayer
@@ -35,8 +35,7 @@ class N6_Update:
         :param inner_thought: N5回应层产出的内心想法
         :return: (更新后的B3NPCLayer, 玩家增量dict, 旁白list)
         """
-        with open(os.path.join(BASE_PATH, r'prompt\N6_update_sys.txt'), 'r', encoding='utf-8') as f:
-            sys_prompt = f.read()
+        sys_prompt = load_prompt('N6_update_sys.txt')
 
         all_context = [{'role': 'system', 'content': sys_prompt}]
         user_input = {
@@ -88,8 +87,7 @@ class N6_Update:
             '游戏时间': game_time_str,
         }
 
-        with open(os.path.join(BASE_PATH, r'prompt\N6_player_sys.txt'), 'r', encoding='utf-8') as f:
-            sys_prompt = f.read()
+        sys_prompt = load_prompt('N6_player_sys.txt')
 
         all_context = [
             {'role': 'system', 'content': sys_prompt},

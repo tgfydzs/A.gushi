@@ -1,10 +1,8 @@
-import os
+import json
 
 from Schema.B4_player_sch import B4PlayerLayer
-from Schema.N2_contextRetrieval_sch import N2ContextRetrievalLayer
 from common.log import get_logger
 from common.small_tool import *
-from common.base_cnf import *
 from common.LLMclient import LLMClient
 from Schema.Context_sch import ContextHistory
 from Schema.B3_npclist_sch import B3NPCListLayer
@@ -53,8 +51,7 @@ class N3_Info_Filtering:
                     }
                 }
         """
-        with open(os.path.join(BASE_PATH, r'prompt\N3_informationFiltering_sys.txt'), 'r', encoding='utf-8') as f:
-            sys_prompt = f.read()
+        sys_prompt = load_prompt('N3_informationFiltering_sys.txt')
         all_context = []
         all_context.append({'role': 'system', 'content': sys_prompt})
         # 构建每个NPC的简要档案，供LLM做位置/感知范围判断
