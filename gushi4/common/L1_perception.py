@@ -182,6 +182,10 @@ class L1_Perception:
             '当前事件范围': event_layer.scope.value,
             '世界观所有NPC': self._roster(all_npc_list),
             '玩家': self._player_view(player),
+            # 地段属性链（根→当前地点）。**不给继承结论**，由 L1 自己看着整条链判断
+            # ——"东域灵气浓郁"对这个地点意味着什么，是叙事判断，不该由代码写死。
+            # 用途：坊市里高声喊 ≠ 洞府里高声喊；这是"谁听得到"的判断依据之一。
+            '当前地段': world_layer.get_location_context(player_loc),
             '玩家附近NPC': self._nearby(world_layer, all_npc_list, player_loc, cur_event),
             '对话上下文': list(event_context.context),
             '幕后情报': list(director_context.context)[-10:],

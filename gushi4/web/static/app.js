@@ -62,6 +62,26 @@ function pick(o, ...names) {
 const isEmpty = v => v == null || v === '' || (Array.isArray(v) && !v.length)
   || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length);
 
+/**
+ * 地段属性值 → 一行可读文字。
+ *
+ * 属性的值形状是自由的（`"浓郁"` 字符串、`["修炼","比试"]` 数组、
+ * 将来还可能嵌套），所以不能直接丢进模板——数组会渲染成 `a,b`，
+ * 对象会变成 `[object Object]`。
+ */
+function attrText(v) {
+  if (Array.isArray(v)) return v.length ? v.join('、') : '无';
+  if (v && typeof v === 'object') {
+    return Object.entries(v).map(([k, x]) => `${k}${attrText(x)}`).join('　');
+  }
+  return String(v == null ? '' : v);
+}
+
+/** 地段属性里**不该给玩家看**的键。 */
+const ATTR_HIDDEN = new Set([
+  '产出',   // 投放概率表 —— 露出来等于把骰子给玩家看，那是引擎内部
+]);
+
 async function api(path, opts) {
   const r = await fetch(path, opts);
   if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => '')}`.slice(0, 200));
@@ -301,6 +321,16 @@ function renderTree(nodes, onPath, filter, depth) {
     // 只在**当前所在**的那一行把描述摊开——那一个才是你真要看的
     if (cur && n.desc) h += `<div class="tdesc">${esc(n.desc)}</div>`;
 
+    // 同样只在当前那一行摊开地段属性。跟描述一个道理：
+    // 全树都铺开的话，39 个节点每个挂四五个标签，树就没法看了。
+    if (cur && n.attrs) {
+      const chips = Object.entries(n.attrs)
+        .filter(([k]) => !ATTR_HIDDEN.has(k) && !k.startsWith('_'))
+        .map(([k, v]) => `<span class="tattr"><i>${esc(k)}</i>${esc(attrText(v))}</span>`)
+        .join('');
+      if (chips) h += `<div class="tattrs">${chips}</div>`;
+    }
+
     if (open && hasKids) {
       h += `<div class="tkids">${renderTree(n.children, onPath, filter, depth + 1)}</div>`;
     }
@@ -311,6 +341,11 @@ function renderTree(nodes, onPath, filter, depth) {
 
 function matchFilter(node, f) {
   if (node.name.includes(f) || (node.desc || '').includes(f)) return true;
+  // 属性也要能被搜到——不然"哪里有坊市"这种问法就得靠肉眼翻整棵树
+  if (node.attrs && Object.entries(node.attrs)
+    .some(([k, v]) => !ATTR_HIDDEN.has(k) && (k.includes(f) || attrText(v).includes(f)))) {
+    return true;
+  }
   return (node.children || []).some(c => matchFilter(c, f));
 }
 

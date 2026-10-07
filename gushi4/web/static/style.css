@@ -240,6 +240,15 @@ body { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
   font-size: 11.5px; color: var(--text-mute); line-height: 1.5;
   padding: 1px 0 5px 21px; font-style: italic;
 }
+/* 当前地点的属性标签（灵气/危险/势力/功能…）。与 .tdesc 同样只在当前行出现 */
+.tattrs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 0 6px 21px; }
+.tattr {
+  font-size: 10.5px; line-height: 1.6;
+  padding: 0 6px; border-radius: 3px;
+  background: #ffffff0a; border: 1px solid var(--line-soft);
+  color: var(--text-mute);
+}
+.tattr i { font-style: normal; opacity: .6; margin-right: 3px; }
 
 /* ══════════ 叙事流 ══════════ */
 

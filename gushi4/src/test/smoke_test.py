@@ -130,6 +130,51 @@ print(f'     起始时间：{gc.game_clock.now_str()}')
 
 print()
 print('=' * 70)
+print('5.5 资源文件与配置键自检')
+print('=' * 70)
+
+# ---- data/ 下每个 JSON 都要能解析 ----
+#
+# ⚠️ 这一组以前**完全不存在**，代价是：`data/player/剑无锋.json` 第 21 行
+# 行内用了半角引号做强调，把 JSON 字符串提前截断，文件长期非法，
+# 一路跟着整体提交进了 git。坏资源在真正被读到之前不报错，
+# 所以必须在测试里主动扫一遍。
+_bad_assets, _n_assets = [], 0
+for _root, _dirs, _files in os.walk(os.path.join(BASE_PATH, 'data')):
+    _dirs[:] = [d for d in _dirs if d != '__pycache__']
+    for _f in _files:
+        if not _f.endswith('.json'):
+            continue
+        _p = os.path.join(_root, _f)
+        _n_assets += 1
+        try:
+            with open(_p, 'r', encoding='utf-8') as _fh:
+                json.load(_fh)
+        except Exception as _e:
+            _bad_assets.append(f'{os.path.relpath(_p, BASE_PATH)}: {_e}')
+check(f'data/ 下全部 JSON 可解析（{_n_assets} 个）', not _bad_assets,
+      ' | '.join(_bad_assets))
+
+# ---- 每个玩家档都要能载入（上面只证明它是合法 JSON）----
+_player_dir = os.path.join(BASE_PATH, 'data', 'player')
+_player_files = sorted(f for f in os.listdir(_player_dir) if f.endswith('.json'))
+check(f'玩家档非空（{len(_player_files)} 个）', len(_player_files) > 0)
+_active_player = gc.b1WorldLayer.get_config('玩家初始数据', '')
+check('世界配置指向的玩家档真实存在',
+      os.path.isfile(os.path.join(BASE_PATH, _active_player)), _active_player)
+
+# ---- NPC 表截断上限：配置键必须与代码查的键对得上 ----
+#
+# 曾经的坑：`init_all_npcs` 查 `NPC_上限_MAX_MEMORY`（键名由 CAP_MAP 的值拼成），
+# 而 global.json 里写的是 `NPC_记忆上限`——两边**零交集**，
+# 那几项配置从来没生效过，只因值恰好等于类默认值才没暴露。
+_missing_caps = [f'NPC_上限_{_a}' for _, _a in B3NPCLayer.CAP_MAP.items()
+                 if gc.b1WorldLayer.get_config(f'NPC_上限_{_a}', None) is None]
+check(f'NPC 表截断上限全部可从配置读到（{len(B3NPCLayer.CAP_MAP)} 项）',
+      not _missing_caps, '缺：' + '、'.join(_missing_caps))
+
+print()
+print('=' * 70)
 print('6. R2 时钟推进（耗时由 L3 判断，本层只做下限保护）')
 print('=' * 70)
 r2 = R2_Time(gc.b1WorldLayer)

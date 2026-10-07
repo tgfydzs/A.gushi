@@ -342,21 +342,26 @@ class GameEngine:
         """
         地点树（规范化成前端好渲染的形状）+ 当前位置。
 
-        原始数据里**中间节点是 dict、叶节点是字符串**（字符串是该地的描述），
-        这里统一成 `{name, path, leaf, desc, children}`，前端不必猜类型。
+        原始节点形状有三种（见 `B1WorldLayer.normalize_node`）：老写法的字符串叶、
+        带 `_属性` 的对象、只有属性的叶。这里统一成
+        `{name, path, leaf, desc, attrs, children}`，前端不必猜类型。
+
+        ⚠️ 遍历必须走 `normalize_node`——直接读原始节点的键，`_属性` 会被当成
+        一个叫"_属性"的子地点渲染出来，前端就会多出一堆假节点。
+        `ui_test.py` 那条 `total_nodes > 20` 正是这个漏掉的探测器。
         """
         raw = self.gc.b1WorldLayer.get_location_tree() or {}
+        norm = self.gc.b1WorldLayer.normalize_node
 
-        def walk(node: dict, prefix: str) -> list:
+        def walk(node, prefix: str) -> list:
             out = []
-            for k, v in node.items():
+            _, _, kids = norm(node)
+            for k, v in kids.items():
                 path = f'{prefix}·{k}' if prefix else k
-                if isinstance(v, dict):
-                    out.append({'name': k, 'path': path, 'leaf': False,
-                                'desc': '', 'children': walk(v, path)})
-                else:
-                    out.append({'name': k, 'path': path, 'leaf': True,
-                                'desc': str(v), 'children': []})
+                attrs, desc, grand = norm(v)
+                out.append({'name': k, 'path': path, 'leaf': not grand,
+                            'desc': desc, 'attrs': attrs,
+                            'children': walk(v, path) if grand else []})
             return out
 
         tree = walk(raw, '')

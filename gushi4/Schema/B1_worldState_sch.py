@@ -5,6 +5,28 @@ from common.log import get_logger
 logger = get_logger(__name__)
 
 
+# ══════════════════════════════════════════════════════════════
+#  地点节点的保留键
+# ══════════════════════════════════════════════════════════════
+#
+# 地点树升级后，每个节点（不只叶节点）都可以带属性：
+#
+#     "东域": {
+#         "_属性": {"灵气": "浓郁", "危险": "低"},
+#         "天道宗": { ... 子地点 ... }
+#     }
+#
+# 于是"这个键是子地点还是元数据"必须有个判据，否则遍历器会把 `_属性`
+# 当成一个叫"_属性"的地点，把 `苍云大陆·东域·_属性` 写进已知地点列表，
+# L3 拿到它之后**完全可能把玩家的位置写成这串**——位置一漂，
+# 之后所有距离计算都跟着漂，且不会报任何错。
+#
+# 判据取 `_` 前缀 + `描述`。中文地名不会撞上这两个名字。
+# ⚠️ 所有遍历器都必须走 `normalize_node()`，**不要直接读原始节点的键**。
+_RESERVED_DESC_KEY = '描述'
+_RESERVED_PREFIX = '_'
+
+
 class B1WorldLayer:
     """
     base1 世界层
@@ -31,14 +53,19 @@ class B1WorldLayer:
         通过统一入口读取，配置变更只需改 data/ 下的 JSON 文件。
 
         当前可用配置项：
-            NPC_附近距离_段    — 附近NPC距离阈值（add_npc用）
-            NPC_关联距离_段    — 关联NPC距离阈值（add_related_npc用）
+            NPC_附近距离_段    — 附近NPC距离阈值（R3 候选筛选用）
             事件_最小上下文长度 — 新事件判断防死循环的最小上下文条数
             心跳间隔_小时      — 后台心跳触发间隔（游戏时间）
-            NPC_观察上限       — NPC Observation 表最大条数
-            NPC_记忆上限       — NPC Memory 表最大条数
-            NPC_待推理上限     — NPC PendingReasoning 表最大条数
+            NPC_上限_MAX_*     — 各 NPC 表的截断上限。键名由代码拼成
+                                 `f'NPC_上限_{attr}'`，attr 取 `B3NPCLayer.CAP_MAP`
+                                 的值（MAX_OBSERVATION / MAX_MEMORY / MAX_PENDING /
+                                 MAX_PLAYER_OBSERVATION / MAX_BELIEF / MAX_GOALS /
+                                 MAX_RELATIONSHIP），由 `init_all_npcs` 逐个覆写。
+                                 ⚠️ 2026-10-07 前这里是 `NPC_观察上限` 这类旧键名，
+                                 与代码查的键**零交集**，所以那几项从来没生效过——
+                                 只因值恰好等于类默认值才没暴露。改键名时两边一起改。
             玩家初始数据       — 玩家JSON文件路径
+            生命值体系         — "数值" / "文本"，决定像游戏还是像小说
         """
         config = self.dict.get('世界配置', {})
         return config.get(key, default)
@@ -51,6 +78,49 @@ class B1WorldLayer:
         """
         return self.dict.get('世界地点列表', {})
 
+    # ===================== 节点归一化（唯一形状判定点）=====================
+
+    @staticmethod
+    def is_reserved_key(key) -> bool:
+        """这个键是元数据（不是子地点名）吗？"""
+        return (not isinstance(key, str)
+                or key.startswith(_RESERVED_PREFIX)
+                or key == _RESERVED_DESC_KEY)
+
+    @staticmethod
+    def normalize_node(raw) -> tuple:
+        """
+        把任意形状的地点节点归一成 `(属性, 描述, 子地点)`。
+
+        三种合法输入：
+
+            1. 字符串（老写法）      "炼气期外门弟子日常修炼之所"
+               → ({}, '炼气期外门弟子日常修炼之所', {})
+
+            2. 对象（新写法）        {"_属性": {...}, "描述": "...", "子地点名": {...}}
+               → (属性, 描述, 子地点)
+
+            3. 只有属性、没有子地点  → 叶节点
+
+        「是不是叶节点」的判据是 **`not 子地点`**，不是"值是不是 dict"——
+        后者会被 `{"_属性": {...}}` 这种只带属性的节点骗到（它是个非空 dict，
+        会被当成"有子地点"，然后 `_属性` 就作为子节点被列出来）。
+
+        **这是唯一的形状判定点。** 所有遍历器都走它。少改一处，
+        `_属性` 就会作为地点漏进路径里——见 `src/test/location_test.py` 的断言。
+        """
+        if isinstance(raw, str):
+            return {}, raw, {}
+        if not isinstance(raw, dict):
+            return {}, str(raw), {}
+        attrs = raw.get('_属性')
+        if not isinstance(attrs, dict):
+            attrs = {}
+        desc = raw.get(_RESERVED_DESC_KEY, '')
+        kids = {k: v for k, v in raw.items()
+                if not B1WorldLayer.is_reserved_key(k)}
+        return dict(attrs), str(desc or ''), kids
+
     def list_location_paths(self, max_depth: int = 3) -> list:
         """
         把地点树压成路径字符串列表（到 max_depth 层为止）。
@@ -59,14 +129,17 @@ class B1WorldLayer:
         （实测出现过玩家要去"青木山脉"，结果被写成"落霞坪外山道"——
         位置漂了，之后所有距离计算都跟着漂）。
 
+        ⚠️ 遍历走 `normalize_node`，`_属性` 之类的保留键**不会**成为路径段。
+
         :return: ['苍云大陆', '苍云大陆·东域', ...]
         """
         out = []
 
         def walk(node, cur, depth):
-            if depth > max_depth or not isinstance(node, dict):
+            if depth > max_depth:
                 return
-            for key, sub in node.items():
+            _, _, kids = B1WorldLayer.normalize_node(node)
+            for key, sub in kids.items():
                 p = cur + [key]
                 out.append('·'.join(p))
                 walk(sub, p, depth + 1)
@@ -74,20 +147,94 @@ class B1WorldLayer:
         walk(self.get_location_tree(), [], 1)
         return out
 
+    # ===================== 地段属性查询 =====================
+
+    def _walk_path(self, path_str: str):
+        """
+        沿路径下钻，返回 `[(层名, 原始节点), ...]`（根 → 叶）。
+        **任一段对不上就返回 None**——不是"能走多远算多远"的部分结果。
+
+        ⚠️ 这里用**最长匹配**，不按 `·` 逐段匹配。原因：地点键本身可能含 `·`
+        （`"上古试炼秘境·万象洞天"`、`"外门弟子修炼区·落霞坪"` 等 7 个）。
+        `parse_path` 会把它们拆成两段，于是 `list_location_paths` **吐得出来**的路径
+        `get_location_attrs` 却**解不回来**——同一棵树两套答案。
+
+        `get_location_children` 不受影响：它收的是**原始的键名列表**
+        （调用方从键上取的），`·` 在键名里只是一个普通字符。
+        """
+        segs = self.parse_path(path_str)
+        node = self.get_location_tree()
+        chain = []
+        i = 0
+        while i < len(segs):
+            _, _, kids = self.normalize_node(node)
+            hit = None
+            for n in range(len(segs), i, -1):      # 从最长开始试
+                cand = '·'.join(segs[i:n])
+                if cand in kids:
+                    hit, i = cand, n
+                    break
+            if hit is None:
+                return None
+            node = kids[hit]
+            chain.append((hit, node))
+        return chain
+
+    def _resolve_node(self, path_str: str):
+        """沿路径下钻到原始节点；整条路径不成立返回 None。"""
+        chain = self._walk_path(path_str)
+        return chain[-1][1] if chain else None
+
+    def get_location_attrs(self, path_str: str) -> dict:
+        """某个地点**自己**的属性（不含祖先）。找不到返回 {}。"""
+        node = self._resolve_node(path_str)
+        if node is None:
+            return {}
+        attrs, _, _ = self.normalize_node(node)
+        return attrs
+
+    def get_location_context(self, path_str: str) -> list:
+        """
+        从根到该地点的**属性链**，供 LLM 判断用：
+
+            [{'层级': '苍云大陆', '属性': {...}},
+             {'层级': '东域',     '属性': {...}},
+             {'层级': '落霞坪',   '属性': {...}}]
+
+        ⚠️ **刻意不做属性继承。** "东域灵气浓郁"对落霞坪意味着什么，
+        由 LLM 看着整条链自行判断。写成继承规则（子节点自动获得父节点属性）
+        就等于把判定权从 LLM 手里拿走——那正是 `不程序化叙事` 禁止的。
+
+        链上某层没有属性时仍然保留该层级（LLM 需要看到地名本身）。
+        路径不成立时返回空列表。
+        """
+        chain = self._walk_path(path_str) or []
+        return [{'层级': name, '属性': self.normalize_node(n)[0]}
+                for name, n in chain]
+
     def get_location_children(self, path: list) -> dict | None:
         """
-        从根节点沿 path 逐级下钻，返回当前层级的所有子节点。
-        :param path: 层级路径，如 ['华国', '东南沿海市']
-        :return: 子节点字典，如 {'旧城区': {...}, '新城区': {...}}；路径不存在返回 None
+        从根节点沿 path 逐级下钻，返回当前层级的**子地点**。
+
+        ⚠️ 返回的字典已经过归一化——`_属性` 之类的保留键**不在里面**。
+        原实现直接返回原始 dict，升级地点节点后 `_属性` 会作为可选子地点
+        出现在终端菜单里。
+
+        :param path: 层级路径，如 ['苍云大陆', '东域']
+        :return: 子地点字典，如 {'天道宗': {...}, '星辰阁': {...}}；
+                 路径不存在、或落在老写法的字符串叶上，返回 None
         """
         node = self.get_location_tree()
         for step in path:
-            if not isinstance(node, dict) or step not in node:
+            _, _, kids = self.normalize_node(node)
+            if step not in kids:
                 return None
-            node = node[step]
-        if isinstance(node, dict):
-            return node
-        return None
+            node = kids[step]
+        # 老写法的叶节点是字符串，它没有子地点（保持原行为：返回 None）
+        if not isinstance(node, dict):
+            return None
+        _, _, kids = self.normalize_node(node)
+        return kids
 
     @staticmethod
     def parse_path(path_str: str) -> list:
@@ -191,19 +338,14 @@ class B1WorldLayer:
                 # 有子节点 → 列出
                 keys = list(children.keys())
                 for i, key in enumerate(keys, 1):
-                    # 判断是否为叶节点（值不是字典或空字典）
-                    is_leaf = not isinstance(children[key], dict) or len(children[key]) == 0
-                    desc = ''
-                    if is_leaf and isinstance(children[key], str):
-                        desc = children[key]
-                        if len(desc) > 30:
-                            desc = desc[:30] + '...'
-                        desc = f'  — {desc}'
-                    elif is_leaf:
-                        desc = '  — (叶)'
+                    # 叶/枝判定必须走归一化——直接看原始值会被 `{"_属性": …}` 骗到：
+                    # 它是个非空 dict，会被当成"有子地点"，然后 `_属性` 就上了菜单
+                    _, _desc, _kids = self.normalize_node(children[key])
+                    if not _kids:
+                        d = _desc[:30] + '...' if len(_desc) > 30 else _desc
+                        desc = f'  — {d}' if d else '  — (叶)'
                     else:
-                        subs = len(children[key]) if isinstance(children[key], dict) else 0
-                        desc = f'  [{subs}个子地点]'
+                        desc = f'  [{len(_kids)}个子地点]'
                     print(f'  [{i}] {key}{desc}')
             else:
                 # children 是空字典或字符串值 → 叶节点
@@ -263,13 +405,11 @@ class B1WorldLayer:
                     if 0 <= idx < len(keys):
                         selected = keys[idx]
                         current_path.append(selected)
-                        new_children = children[selected]
-                        # 叶节点（字符串值或空dict）→ 可选确认或继续细化
-                        if not isinstance(new_children, dict) or len(new_children) == 0:
+                        # 叶/枝判定同样走归一化：`_属性` 不是子地点
+                        _, _desc, _kids = self.normalize_node(children[selected])
+                        if not _kids:
                             target = '·'.join(current_path)
-                            desc_str = ''
-                            if isinstance(new_children, str) and new_children:
-                                desc_str = f'（{new_children[:40]}）'
+                            desc_str = f'（{_desc[:40]}）' if _desc else ''
                             print(f'  已选择叶节点：{target} {desc_str}')
                             print('  [y] ✅ 确认前往')
                             print('  [c] 📝 继续细化（在此之下创建更具体的位置）')
@@ -286,7 +426,7 @@ class B1WorldLayer:
                                 current_path.pop()
                             continue
                         else:
-                            children = new_children
+                            children = _kids
                             continue
                 except ValueError:
                     pass

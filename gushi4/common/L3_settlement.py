@@ -149,6 +149,21 @@ class L3_Settlement:
         """
         self.world_layer = world_layer
 
+    def _location_context(self, location: str) -> list:
+        """
+        地段属性链（根 → 当前地点），供结算判断用。
+
+        属性是**描述**不是**规则**：坊市讲价合理、禁地乱走有后果——
+        这些是 L3 看着属性做的叙事判断，代码不写任何"某属性 → 某结果"的映射。
+
+        用 `getattr` 而不是直接调：测试里的 `_FakeWorld` 只实现了 `get_config`，
+        没绑世界时也得能跑（和 `_health_clause` 一样的容错姿态）。
+        """
+        if self.world_layer is None or not location:
+            return []
+        fn = getattr(self.world_layer, 'get_location_context', None)
+        return fn(location) if fn else []
+
     def _health_clause(self) -> str:
         """按世界配置决定要不要追加数值条款。默认数值。"""
         mode = '数值'
@@ -211,6 +226,7 @@ class L3_Settlement:
             '各NPC的动作意图': intents,
             '玩家本轮输入': player_input,
             '当前位置': location or '',
+            '当前地段': self._location_context(location),
             '世界状态': list(world_state or []),
             '移动信息': move_hint or {},
             # ⚠️ 必须给：**结算层没有别的记忆**。它看不到 NPC 的主观表，
@@ -269,6 +285,7 @@ class L3_Settlement:
             '玩家实况': self._player_full(player),
             '玩家本轮输入': player_input,
             '当前位置': location,
+            '当前地段': self._location_context(location),
             '游戏时间': game_time,
             '本轮含移动': bool(has_move),
             # 有 `{移动}` 标记时给出起点终点；自由文本移动时为空，
