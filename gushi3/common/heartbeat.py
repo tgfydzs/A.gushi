@@ -17,7 +17,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from common.log import get_logger
-from common.small_tool import safe_json_loads, load_prompt
+from common.small_tool import load_prompt, safe_json_loads
 from common.base_cnf import BASE_PATH
 from common.LLMclient import LLMClient
 from common.deferred_queue import DeferredQueue
@@ -59,7 +59,7 @@ class HeartbeatManager:
         self.logger = logger if logger else get_logger('Heartbeat')
         self.queue = deferred_queue
         self.n9 = n9_director
-        self.cli = LLMClient()
+        self.cli = LLMClient('N9c')
 
         self._last_trigger_elapsed_minutes = 0
         self._heartbeat_count = 0
@@ -170,7 +170,7 @@ class HeartbeatManager:
                             'N9a_规则触发': result.get('规则触发', []),
                         })
                     elif ftype == 'N9b' and result:
-                        narrs = result if isinstance(result, list) else []
+                        narrs = result.get('旁白', []) if isinstance(result, dict) else []
                         self.queue.put({
                             'source': 'heartbeat',
                             'trigger_reason': reason,
@@ -293,11 +293,6 @@ class HeartbeatManager:
         try:
             reply = self.cli.chat_by_context(all_context, label=f'N9c-组{idx}')
             result = safe_json_loads(reply, label=f'N9c-组{idx}')
-            npc_actions = result.get('NPC自主行为', {}) or {}
-            for name in list(npc_actions.keys()):
-                if isinstance(npc_actions[name], str):
-                    npc_actions[name] = {'动作': npc_actions[name]}
-            result['NPC自主行为'] = npc_actions
             result.setdefault('剧情级传播', [])
             return result
         except Exception as e:

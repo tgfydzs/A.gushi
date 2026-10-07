@@ -2,7 +2,7 @@ import json
 
 from Schema.B4_player_sch import B4PlayerLayer
 from common.log import get_logger
-from common.small_tool import *
+from common.small_tool import load_prompt, safe_json_loads
 from common.LLMclient import LLMClient
 from Schema.Context_sch import ContextHistory
 from Schema.B3_npclist_sch import B3NPCListLayer
@@ -19,7 +19,7 @@ from Schema.B3_npclist_sch import B3NPCListLayer
 class N3_Info_Filtering:
     def __init__(self, logger=None):
         self.logger = logger if logger else get_logger('N3_IF')
-        self.cli = LLMClient()
+        self.cli = LLMClient('N3')
 
 
 

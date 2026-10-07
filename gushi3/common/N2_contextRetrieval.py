@@ -1,9 +1,10 @@
+import json
 import os
 
 from Schema.N2_contextRetrieval_sch import N2ContextRetrievalLayer
 from Schema.Context_sch import ContextHistory
 from common.log import get_logger
-from common.small_tool import *
+from common.small_tool import load_prompt, safe_json_loads
 from common.base_cnf import *
 from common.LLMclient import LLMClient
 
@@ -11,7 +12,7 @@ from common.LLMclient import LLMClient
 class N2_CE_Process:
 
     def __init__(self, logger=None):
-        self.cli = LLMClient()
+        self.cli = LLMClient('N2')
         self.logger = logger if logger else get_logger("N2_CE")
 
 
@@ -35,7 +36,10 @@ class N2_CE_Process:
                     "add_npc": list,
                     "del_npc": list,
                     "add_related_npc": list,
-                    "del_related_npc": list
+                    "del_related_npc": list,
+                    "move_to": str,                    # 移动目标地点，无移动为 ""
+                    "move_style": str,                 # 移动方式（步行/疾行/御剑飞行…），无移动为 ""
+                    "move_declared_minutes": int       # 玩家明确声明的移动耗时，未声明为 0
                 }
         """
         with open(os.path.join(BASE_PATH, r'prompt\N2_contextRetrieval_sys.txt'), 'r', encoding='utf-8') as f:
@@ -59,17 +63,14 @@ class N2_CE_Process:
         replay = self.cli.chat_by_context(all_context, label='N2')
         json_replay = safe_json_loads(replay, label='N2')
 
-        # 代码层防幻觉：子串匹配过滤不存在的NPC名
+        # 确保所有列表字段存在
         for key in ('add_npc', 'del_npc', 'add_related_npc', 'del_related_npc'):
-            raw_list = json_replay.get(key, []) or []
-            filtered = []
-            for n in raw_list:
-                resolved = resolve_npc_name(n, all_npc_names or [])
-                if resolved:
-                    filtered.append(resolved)
-                else:
-                    self.logger.warn(f'N2返回了不存在的NPC名，已过滤：{n}')
-            json_replay[key] = filtered
+            json_replay.setdefault(key, [])
+
+        # 移动相关字段兜底（供 N8 折算移动耗时）
+        json_replay.setdefault('move_to', '')
+        json_replay.setdefault('move_style', '')
+        json_replay.setdefault('move_declared_minutes', 0)
 
         return json_replay
 

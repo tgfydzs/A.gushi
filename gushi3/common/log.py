@@ -80,15 +80,26 @@ class _LogEngine:
         self._open_file(file_append)
 
     def _lazy_init(self):
-        """懒初始化：使用 base_cnf 里的默认值"""
+        """
+        懒初始化：使用 base_cnf 里的默认值。
+
+        **用追加模式**，与正式入口的 setup() 区分开：
+        懒初始化几乎总是被"意外导入"触发的（跑个离线测试脚本、单测某个层），
+        如果这里用覆盖模式，一次 `import common.N6_update` 就能把整个游戏日志清空。
+        正式入口（main）显式调用 setup() 时，才由它决定是否重开日志。
+
+        懒初始化会留一条 WARN 标记，方便事后区分"混进来的测试输出"。
+        """
         self.setup(
             session_id="default",
             log_file_path=DEFAULT_LOG_PATH,
             file_min_score=LOG_FILE_LEVEL,
             console_min_score=LOG_CONSOLE_LEVEL,
             console_enable=True,
-            file_append=False,
+            file_append=True,
         )
+        self.write("WARN", "日志引擎被懒初始化（正式入口未调用 log.setup()）——"
+                           "本次输出以追加方式写入，请确认是否与游戏日志混在一起", "log")
 
     def _open_file(self, file_append: bool):
         """打开/重开日志文件（线程安全）"""

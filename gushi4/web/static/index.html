@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gushi4</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ══════════ 顶栏：一直可见的几个数 ══════════ -->
+<header id="topbar">
+  <div class="brand">gushi<span>4</span></div>
+
+  <div class="headline">
+    <span id="hName" class="hname">…</span>
+    <span class="sep">·</span>
+    <span id="hLoc" class="hloc" title="点击展开地点树">…</span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div id="hClock" class="clock">…</div>
+  <div id="hRound" class="round">第 0 轮</div>
+
+  <div class="actions">
+    <button id="btnPanels" class="btn" title="选择显示哪些面板">面板</button>
+    <button id="btnPresetPlay" class="btn" title="只留游玩需要的">游玩</button>
+    <button id="btnPresetDev" class="btn" title="全部打开">开发</button>
+    <button id="btnUndo" class="btn" title="撤回上一条（!!）">撤回</button>
+  </div>
+</header>
+
+<!-- ══════════ 面板抽屉：勾选要显示什么 ══════════ -->
+<div id="panelDrawer" class="drawer hidden">
+  <div class="drawer-head">
+    <strong>面板</strong>
+    <span class="hint">勾选即显示，自动记住</span>
+    <button id="drawerClose" class="btn btn-sm">关闭</button>
+  </div>
+  <div id="panelList" class="drawer-list"></div>
+</div>
+
+<!-- ══════════ 三栏主体 ══════════ -->
+<main id="layout">
+
+  <aside id="railLeft" class="rail"></aside>
+
+  <section id="center">
+    <!-- 阶段进度：一轮 7 秒里"还在动"的唯一凭据 -->
+    <div id="progress" class="progress hidden">
+      <div class="prog-row">
+        <span class="spinner"></span>
+        <span id="progName">…</span>
+        <span id="progSecs" class="prog-secs"></span>
+        <span id="progDetail" class="prog-detail"></span>
+      </div>
+      <div class="prog-steps" id="progSteps"></div>
+    </div>
+
+    <div id="stream" class="stream"></div>
+
+    <div id="composer" class="composer">
+      <textarea id="input" rows="2" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <button id="btnSend" class="btn btn-send">发送</button>
+    </div>
+  </section>
+
+  <aside id="railRight" class="rail"></aside>
+
+</main>
+
+<!-- ══════════ 地点选择浮层（移动标记用） ══════════ -->
+<div id="moveModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head">
+      <strong>选择目标位置</strong>
+      <button id="moveCancel" class="btn btn-sm">取消</button>
+    </div>
+    <div class="modal-tools">
+      <input id="moveFilter" placeholder="过滤…" autocomplete="off">
+    </div>
+    <div id="moveTree" class="modal-body"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

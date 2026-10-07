@@ -29,11 +29,19 @@ name = 'deepseek'
 if name == 'deepseek':
     API_KEY = os.environ['DEEPSEEK_API_KEY']
     BASE_URL = 'https://api.deepseek.com/chat/completions'
-    MODEL_NAME = 'deepseek-v4-flash'
+    MODEL_NAME = 'deepseek-flash'
 elif name == '魔搭':
     API_KEY = os.environ['MODELSCOPE_API_KEY']
     BASE_URL = 'https://api-inference.modelscope.cn/v1/chat/completions'
     MODEL_NAME = 'Qwen/Qwen3.5-27B'
+
+
+# ---------------- 分层模型路由 ----------------
+# 按【层名】覆写模型；未列出的层回落到上面的 MODEL_NAME。
+# 用途：判断/分发/结构化这类浅任务（N2/N3）可换更快的小模型，
+#       创作类重任务（N5/N9b）保留主模型。
+# 例：LAYER_MODEL_OVERRIDE = {'N2': 'deepseek-v4-lite', 'N3': 'deepseek-v4-lite'}
+LAYER_MODEL_OVERRIDE = {}
 
 
 

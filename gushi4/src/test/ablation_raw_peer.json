@@ -1,0 +1,469 @@
+{
+ "基线": [
+  {
+   "name": "基线",
+   "rep": 1,
+   "thinking_off": "(全开)",
+   "scenario": "近修为剧本.txt",
+   "wall_sec": 127.37896585464478,
+   "returncode": 0,
+   "layers": {
+    "_fails": 0
+   },
+   "quality": {
+    "probe_count": 7,
+    "probe_error": "",
+    "n_responses": 5,
+    "avg_len": 37.2,
+    "cliche_total": 0,
+    "cliche_detail": {},
+    "avg_similarity": 0.15487058762782507,
+    "leaks_said": [],
+    "leaks_thought": [],
+    "broken_trades": 1,
+    "broken_consistent": 1,
+    "truth_word": "炼气中期",
+    "l1_perceptions": 5,
+    "l1_echo_truth": 1
+   }
+  },
+  {
+   "name": "基线",
+   "rep": 2,
+   "thinking_off": "(全开)",
+   "scenario": "近修为剧本.txt",
+   "wall_sec": 160.24487614631653,
+   "returncode": 0,
+   "layers": {
+    "L3": {
+     "n": 1,
+     "sec": 4.5,
+     "in": 5208,
+     "out": 771,
+     "reason": 542,
+     "max_sec": 4.5,
+     "calls": [
+      4.5
+     ],
+     "avg_sec": 4.5
+    },
+    "_fails": 0
+   },
+   "quality": {
+    "probe_count": 7,
+    "probe_error": "",
+    "n_responses": 9,
+    "avg_len": 54.77777777777778,
+    "cliche_total": 0,
+    "cliche_detail": {},
+    "avg_similarity": 0.1609273272183741,
+    "leaks_said": [],
+    "leaks_thought": [],
+    "broken_trades": 1,
+    "broken_consistent": 1,
+    "truth_word": "炼气中期",
+    "l1_perceptions": 9,
+    "l1_echo_truth": 3
+   }
+  },
+  {
+   "name": "基线",
+   "rep": 3,
+   "thinking_off": "(全开)",
+   "scenario": "近修为剧本.txt",
+   "wall_sec": 118.56765794754028,
+   "returncode": 0,
+   "layers": {
+    "_fails": 0
+   },
+   "quality": {
+    "probe_count": 7,
+    "probe_error": "",
+    "n_responses": 5,
+    "avg_len": 44.6,
+    "cliche_total": 0,
+    "cliche_detail": {},
+    "avg_similarity": 0.14521980774942142,
+    "leaks_said": [],
+    "leaks_thought": [],
+    "broken_trades": 1,
+    "broken_consistent": 1,
+    "truth_word": "炼气中期",
+    "l1_perceptions": 5,
+    "l1_echo_truth": 1
+   }
+  }
+ ],
+ "全关": [
+  {
+   "name": "全关",
+   "rep": 1,
+   "thinking_off": "ALL",
+   "scenario": "近修为剧本.txt",
+   "wall_sec": 32.261500120162964,
+   "returncode": 0,
+   "layers": {
+    "S1": {
+     "n": 5,
+     "sec": 4.3999999999999995,
+     "in": 2675,
+     "out": 118,
+     "reason": 0,
+     "max_sec": 1.4,
+     "calls": [
+      1.4,
+      0.8,
+      0.8,
+      0.8,
+      0.6
+     ],
+     "avg_sec": 0.8799999999999999
+    },
+    "L1": {
+     "n": 5,
+     "sec": 9.0,
+     "in": 23407,
+     "out": 1167,
+     "reason": 0,
+     "max_sec": 2.3,
+     "calls": [
+      2.3,
+      1.8,
+      1.8,
+      1.5,
+      1.6
+     ],
+     "avg_sec": 1.8
+    },
+    "L2": {
+     "n": 14,
+     "sec": 45.5,
+     "in": 37457,
+     "out": 5905,
+     "reason": 0,
+     "max_sec": 4.7,
+     "calls": [
+      2.6,
+      3.4,
+      3.0,
+      2.1,
+      4.0,
+      3.3,
+      3.2,
+      3.4,
+      2.8,
+      4.7,
+      2.8,
+      2.8,
+      3.7,
+      3.7
+     ],
+     "avg_sec": 3.25
+    },
+    "L3": {
+     "n": 5,
+     "sec": 7.3,
+     "in": 21899,
+     "out": 752,
+     "reason": 0,
+     "max_sec": 1.9,
+     "calls": [
+      1.9,
+      1.1,
+      1.6,
+      1.2,
+      1.5
+     ],
+     "avg_sec": 1.46
+    },
+    "B1b": {
+     "n": 1,
+     "sec": 2.3,
+     "in": 929,
+     "out": 212,
+     "reason": 181,
+     "max_sec": 2.3,
+     "calls": [
+      2.3
+     ],
+     "avg_sec": 2.3
+    },
+    "B1a": {
+     "n": 1,
+     "sec": 10.1,
+     "in": 1327,
+     "out": 1622,
+     "reason": 986,
+     "max_sec": 10.1,
+     "calls": [
+      10.1
+     ],
+     "avg_sec": 10.1
+    },
+    "_fails": 0
+   },
+   "quality": {
+    "probe_count": 7,
+    "probe_error": "",
+    "n_responses": 5,
+    "avg_len": 61.4,
+    "cliche_total": 0,
+    "cliche_detail": {},
+    "avg_similarity": 0.17601256538503465,
+    "leaks_said": [],
+    "leaks_thought": [],
+    "broken_trades": 1,
+    "broken_consistent": 1,
+    "truth_word": "炼气中期",
+    "l1_perceptions": 5,
+    "l1_echo_truth": 2
+   }
+  },
+  {
+   "name": "全关",
+   "rep": 2,
+   "thinking_off": "ALL",
+   "scenario": "近修为剧本.txt",
+   "wall_sec": 27.317814826965332,
+   "returncode": 0,
+   "layers": {
+    "S1": {
+     "n": 5,
+     "sec": 4.8,
+     "in": 2675,
+     "out": 118,
+     "reason": 0,
+     "max_sec": 1.4,
+     "calls": [
+      1.4,
+      0.9,
+      0.7,
+      0.9,
+      0.9
+     ],
+     "avg_sec": 0.96
+    },
+    "L1": {
+     "n": 5,
+     "sec": 9.0,
+     "in": 23025,
+     "out": 1151,
+     "reason": 0,
+     "max_sec": 2.2,
+     "calls": [
+      2.2,
+      1.7,
+      1.5,
+      1.8,
+      1.8
+     ],
+     "avg_sec": 1.8
+    },
+    "L3": {
+     "n": 5,
+     "sec": 6.1,
+     "in": 20360,
+     "out": 734,
+     "reason": 0,
+     "max_sec": 1.7,
+     "calls": [
+      1.7,
+      1.3,
+      0.9,
+      1.1,
+      1.1
+     ],
+     "avg_sec": 1.22
+    },
+    "B1b": {
+     "n": 1,
+     "sec": 2.5,
+     "in": 880,
+     "out": 178,
+     "reason": 148,
+     "max_sec": 2.5,
+     "calls": [
+      2.5
+     ],
+     "avg_sec": 2.5
+    },
+    "L2": {
+     "n": 13,
+     "sec": 44.2,
+     "in": 34061,
+     "out": 5616,
+     "reason": 0,
+     "max_sec": 4.8,
+     "calls": [
+      3.5,
+      2.9,
+      3.2,
+      4.5,
+      2.4,
+      1.9,
+      3.7,
+      3.6,
+      4.8,
+      2.7,
+      3.7,
+      4.0,
+      3.3
+     ],
+     "avg_sec": 3.4000000000000004
+    },
+    "B1a": {
+     "n": 1,
+     "sec": 10.0,
+     "in": 1278,
+     "out": 1597,
+     "reason": 958,
+     "max_sec": 10.0,
+     "calls": [
+      10.0
+     ],
+     "avg_sec": 10.0
+    },
+    "_fails": 0
+   },
+   "quality": {
+    "probe_count": 7,
+    "probe_error": "",
+    "n_responses": 4,
+    "avg_len": 51.5,
+    "cliche_total": 0,
+    "cliche_detail": {},
+    "avg_similarity": 0.19093511957274445,
+    "leaks_said": [],
+    "leaks_thought": [],
+    "broken_trades": 1,
+    "broken_consistent": 1,
+    "truth_word": "炼气中期",
+    "l1_perceptions": 4,
+    "l1_echo_truth": 0
+   }
+  },
+  {
+   "name": "全关",
+   "rep": 3,
+   "thinking_off": "ALL",
+   "scenario": "近修为剧本.txt",
+   "wall_sec": 31.198715448379517,
+   "returncode": 0,
+   "layers": {
+    "S1": {
+     "n": 5,
+     "sec": 4.4,
+     "in": 2675,
+     "out": 120,
+     "reason": 0,
+     "max_sec": 1.2,
+     "calls": [
+      1.2,
+      0.8,
+      0.8,
+      0.7,
+      0.9
+     ],
+     "avg_sec": 0.8800000000000001
+    },
+    "L1": {
+     "n": 5,
+     "sec": 8.9,
+     "in": 22743,
+     "out": 1156,
+     "reason": 0,
+     "max_sec": 2.0,
+     "calls": [
+      1.6,
+      1.9,
+      1.6,
+      2.0,
+      1.8
+     ],
+     "avg_sec": 1.78
+    },
+    "L3": {
+     "n": 5,
+     "sec": 8.5,
+     "in": 20206,
+     "out": 939,
+     "reason": 0,
+     "max_sec": 2.1,
+     "calls": [
+      2.1,
+      1.5,
+      1.4,
+      1.6,
+      1.9
+     ],
+     "avg_sec": 1.7
+    },
+    "B1b": {
+     "n": 1,
+     "sec": 3.2,
+     "in": 881,
+     "out": 424,
+     "reason": 395,
+     "max_sec": 3.2,
+     "calls": [
+      3.2
+     ],
+     "avg_sec": 3.2
+    },
+    "L2": {
+     "n": 13,
+     "sec": 41.1,
+     "in": 33764,
+     "out": 4718,
+     "reason": 0,
+     "max_sec": 4.6,
+     "calls": [
+      3.4,
+      3.1,
+      3.4,
+      3.3,
+      2.5,
+      2.6,
+      2.1,
+      2.7,
+      3.1,
+      4.6,
+      2.8,
+      3.9,
+      3.6
+     ],
+     "avg_sec": 3.161538461538462
+    },
+    "B1a": {
+     "n": 1,
+     "sec": 8.0,
+     "in": 1279,
+     "out": 1213,
+     "reason": 760,
+     "max_sec": 8.0,
+     "calls": [
+      8.0
+     ],
+     "avg_sec": 8.0
+    },
+    "_fails": 0
+   },
+   "quality": {
+    "probe_count": 7,
+    "probe_error": "",
+    "n_responses": 4,
+    "avg_len": 67.25,
+    "cliche_total": 0,
+    "cliche_detail": {},
+    "avg_similarity": 0.20440435609769,
+    "leaks_said": [],
+    "leaks_thought": [],
+    "broken_trades": 1,
+    "broken_consistent": 1,
+    "truth_word": "炼气中期",
+    "l1_perceptions": 4,
+    "l1_echo_truth": 0
+   }
+  }
+ ]
+}

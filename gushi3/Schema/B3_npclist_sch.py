@@ -37,6 +37,10 @@ class B3NPCListLayer:
         """
         从列表中移除一个NPC实体
         注：因 Python 中 del 为保留关键字，方法名使用 delete
+
+        按名字匹配移除：读档/撤回后 event_npc 与 all_npc_list 会被分别重建为
+        独立实例，此时按对象身份 list.remove() 会抛 ValueError。改为按名字
+        定位移除，兼容跨列表引用。
         :param npc: 要移除的 B3NPCLayer 实例
         """
         if npc is None:
@@ -45,8 +49,12 @@ class B3NPCListLayer:
         elif not isinstance(npc, B3NPCLayer):
             logger.warn(f"删除npc错误，期望 B3NPCLayer 实例，实际收到 {type(npc)}")
             return
-        self.npc_list.remove(npc)
-        logger.debug(f"NPC [{npc.name}] 已从列表移除，当前列表长度: {len(self.npc_list)}")
+        for i, n in enumerate(self.npc_list):
+            if n.name == npc.name:
+                del self.npc_list[i]
+                logger.debug(f"NPC [{npc.name}] 已从列表移除，当前列表长度: {len(self.npc_list)}")
+                return
+        logger.warn(f"删除npc [{npc.name}] 失败：列表中不存在同名NPC，当前列表长度: {len(self.npc_list)}")
 
     @staticmethod
     def _strip_brackets(s: str) -> str:

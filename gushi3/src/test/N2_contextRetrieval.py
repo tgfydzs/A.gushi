@@ -1,10 +1,13 @@
 """
-故事3 主流程 v5
+故事3 主流程 v6
 
 调用链（每轮）：
   N0_消费后台产出  →  N1_读输入+命令  →  N2_事件判断
-  →  N3_感知分发  →  [N4→N5→N6]_并行perNPC  →  [N7+N8]_并行
-  →  玩家自主行动(无NPC时)  →  心跳触发
+  →  N3_感知分发  →  [N45→N6]_并行perNPC  →  N7_传播(纯规则)
+  →  玩家自主行动(无NPC时)  →  N8_耗时聚合(纯规则)  →  心跳触发
+
+关键路径 LLM 跳数：N2 → N3 → N45 → N6
+  （原为 N2→N3→N4→N5→N6→N8 共6跳；N4+N5 合并为 N45，N8 的估算并入 N6 后降级为纯规则）
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -18,8 +21,7 @@ from common.heartbeat import HeartbeatManager
 
 from common.N2_contextRetrieval import N2_CE_Process
 from common.N3_informationFiltering import N3_Info_Filtering
-from common.N4_reasoning import N4_Reasoning
-from common.N5_response import N5_Response
+from common.N45_reason_response import N45_ReasonResponse
 from common.N6_update import N6_Update
 from common.N7_propagation import N7_Propagation
 from common.N8_time import N8_Time
@@ -40,8 +42,7 @@ gc.init_player()         # B4_player（路径从世界配置读）
 
 event_judge  = N2_CE_Process()
 info_filter  = N3_Info_Filtering()
-n4_reasoning = N4_Reasoning()
-n5_response  = N5_Response()
+n45_layer    = N45_ReasonResponse()
 n6_update    = N6_Update()
 n7_prop      = N7_Propagation()
 n8_time      = N8_Time()
@@ -131,7 +132,7 @@ def N2_事件判断(player_input: str):
     )
     logger.info(f'N2 结果：{result}')
 
-    is_new = str(result.get('is_new_event', 'false')).strip().lower() == 'true'
+    is_new = bool(result.get('is_new_event', False))
     if is_new:
         ctx_len = len(gc.event_context)
         min_ctx = gc.b1WorldLayer.get_config('事件_最小上下文长度', 2)
@@ -144,29 +145,21 @@ def N2_事件判断(player_input: str):
             gc.event_context.add_context(f'{player_name}（玩家）：{player_input}')
             gc.related_npc.new_list()
 
-    # ---- 应用 NPC 增删（代码层距离校验）----
-    player_loc = gc.player.player_dict['当前状态CurrentState'].get('当前所处位置', '')
-    add_dist = gc.b1WorldLayer.get_config('NPC_附近距离_段', 3)
-    rel_dist = gc.b1WorldLayer.get_config('NPC_关联距离_段', 8)
-
+    # ---- 应用 NPC 增删 ----
     for nm in (result.get('add_npc') or []):
         npc = gc.all_npc_list.get_npc(nm)
-        if npc:
-            d = gc.b1WorldLayer.location_distance(player_loc, npc.current_state.get('当前所处位置', ''))
-            if d <= add_dist: gc.event_npc.add(npc)
-            else: logger.warn(f'N2 add_npc [{nm}] 位置过远({d}段)拦截')
+        if npc: gc.event_npc.add(npc)
     for nm in (result.get('del_npc') or []):
         gc.event_npc.delete(gc.all_npc_list.get_npc(nm))
     for nm in (result.get('add_related_npc') or []):
         npc = gc.all_npc_list.get_npc(nm)
-        if npc:
-            d = gc.b1WorldLayer.location_distance(player_loc, npc.current_state.get('当前所处位置', ''))
-            if d <= rel_dist: gc.related_npc.add(npc)
-            else: logger.warn(f'N2 add_related [{nm}] 位置过远({d}段)拦截')
+        if npc: gc.related_npc.add(npc)
     for nm in (result.get('del_related_npc') or []):
         gc.related_npc.delete(gc.all_npc_list.get_npc(nm))
 
     logger.info(f'N2 后：event_npc={len(gc.event_npc)} related_npc={len(gc.related_npc)}')
+
+    return result
 
 def N3_感知分发() -> dict:
     """N3 → LLM 判断每个NPC收到什么消息 + 地段传播数据。返回 N3 完整输出字典。"""
@@ -178,12 +171,13 @@ def N3_感知分发() -> dict:
                 f'related={len(result.get("事件涉及/潜在npc",{}) or {})}')
     return result
 
-def N4N5N6_并行(n3_result: dict):
+def N45N6_并行(n3_result: dict):
     """
-    仅 locked_set 中的NPC走 N4→N5→N6 并行流水线。
-    N4: 推理待解释事件  N5: 生成回应+内心想法  N6: 落实增量+旁白
+    仅 locked_set 中的NPC走 N45→N6 并行流水线。
+    N45: 推理待解释事件 + 生成回应与内心想法（原N4+N5合并）
+    N6:  落实增量 + 旁白 + 本轮耗时
 
-    返回: (npc_responses, all_narrations)
+    返回: (npc_responses, all_narrations, npc_minutes)
     """
     event_p = n3_result.get('事件涉及的npc', {}) or {}
     related_p = n3_result.get('事件涉及/潜在npc', {}) or {}
@@ -203,19 +197,20 @@ def N4N5N6_并行(n3_result: dict):
         if npc: tasks.append((nm, npc, msg))
 
     if not tasks:
-        logger.info('N4-N6：本轮无锁定NPC，跳过')
-        return [], []
+        logger.info('N45-N6：本轮无锁定NPC，跳过')
+        return [], [], []
 
-    logger.info(f'N4-N6：{len(tasks)} NPC（并行）')
+    logger.info(f'N45-N6：{len(tasks)} NPC（并行）')
     npc_responses = []
     narrations = []
+    npc_minutes = []
 
     with ThreadPoolExecutor(max_workers=min(len(tasks), 6)) as pool:
         futures = {}
         for nm, npc, msg in tasks:
             fut = pool.submit(
                 gc.process_npc_pipeline,
-                nm, npc, True, n4_reasoning, n5_response, n6_update, msg,
+                nm, npc, True, n45_layer, n6_update, msg,
             )
             futures[fut] = nm
 
@@ -223,7 +218,7 @@ def N4N5N6_并行(n3_result: dict):
         for future in as_completed(futures):
             nm = futures[future]
             try:
-                npc_final, response, _, player_delta, narration = future.result()
+                npc_final, response, _, player_delta, narration, minutes = future.result()
                 gc.sync_npc_to_lists(npc_final)
                 npc_responses.append({'name': nm, 'response': response})
                 if response:
@@ -236,8 +231,10 @@ def N4N5N6_并行(n3_result: dict):
                     for line in narration:
                         if line and line not in narrations:
                             narrations.append(line)
+                if minutes:
+                    npc_minutes.append(minutes)
             except Exception as e:
-                logger.error(f'NPC [{nm}] N4-N6异常：{e}')
+                logger.error(f'NPC [{nm}] N45-N6异常：{e}')
 
     if merged_player_delta:
         gc.player.player_dict = apply_player_delta(gc.player.player_dict, merged_player_delta)
@@ -251,47 +248,27 @@ def N4N5N6_并行(n3_result: dict):
     snapshot_npcs(round_no, 'after', gc.all_npc_list)
     diff_npcs(round_no, gc.all_npc_list)
 
-    return npc_responses, narrations
+    return npc_responses, narrations, npc_minutes
 
-def N7N8_并行(n3_result: dict, tasks: list, npc_responses: list,
-               player_input: str, move_info: dict):
+def N7_传播(n3_result: dict, tasks: list) -> dict:
     """
-    N7: 纯规则地段传播  N8: LLM估算时间
+    N7: 纯规则地段传播（零耗时，无需并行）。
 
-    返回: (n7_result, n8_minutes)
+    返回: n7_result — 受影响的 NPC → 消息 映射
     """
     ground_msg = n3_result.get('地段传播', {})
-    experienced = [nm for nm, _, _ in tasks]
-
-    def _n7():
-        if ground_msg and ground_msg.get('msg'):
-            return n7_prop.propagate(
-                ground_msg, gc.b1WorldLayer, gc.all_npc_list,
-                experienced,
-                gc.player.player_dict['当前状态CurrentState'].get('当前所处位置', ''),
-            )
+    if not (ground_msg and ground_msg.get('msg')):
         return {}
 
-    def _n8():
-        if move_info and move_info.get('to'):
-            gc.player.player_dict['当前状态CurrentState']['当前所处位置'] = move_info['to']
-        return n8_time.process(
-            game_clock=gc.game_clock,
-            player_input=player_input,
-            event_context=gc.event_context.context,
-            npc_responses=npc_responses,
-            move_info=move_info,
-        )
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        f7 = pool.submit(_n7)
-        f8 = pool.submit(_n8)
-        r7 = f7.result()
-        m8 = f8.result()
-
+    experienced = [nm for nm, _, _ in tasks]
+    r7 = n7_prop.propagate(
+        ground_msg, gc.b1WorldLayer, gc.all_npc_list,
+        experienced,
+        gc.player.player_dict['当前状态CurrentState'].get('当前所处位置', ''),
+    )
     if r7:
         logger.info(f'N7 传播：影响 {len(r7)} NPC')
-    return r7, m8
+    return r7
 
 def N8后_处理移动(move_info: dict, n8_minutes: float):
     """移动上下文写入 + 玩家位置更新"""
@@ -303,15 +280,21 @@ def N8后_处理移动(move_info: dict, n8_minutes: float):
         f'（耗时{n8_minutes:.1f}分钟）'
     )
 
-def 玩家自主行动(player_input: str, n8_minutes: float, has_npc: bool):
-    """无NPC参与时，N6玩家层处理自主行动（修炼/赶路/探索等）"""
-    if has_npc or n8_minutes < 1:
-        return
-    delta, narrs = n6_update.process_player_action(
+def 玩家自主行动(player_input: str, has_npc: bool, has_move: bool) -> int:
+    """
+    无NPC参与时，N6玩家层处理自主行动（修炼/赶路/探索等）。
+
+    时间跨度由该层自行估算（原N8职责），作为本轮耗时的玩家侧来源返回。
+
+    :return: 本轮耗时分钟；有NPC参与时返回 0
+    """
+    if has_npc:
+        return 0
+    delta, narrs, minutes = n6_update.process_player_action(
         player_inst=gc.player,
         player_input=player_input,
-        elapsed_minutes=int(n8_minutes),
         game_time_str=gc.game_clock.now_str(),
+        has_move=has_move,
     )
     if delta:
         gc.player.player_dict = apply_player_delta(gc.player.player_dict, delta)
@@ -320,6 +303,7 @@ def 玩家自主行动(player_input: str, n8_minutes: float, has_npc: bool):
         for line in narrs:
             print(f'\033[3m  {line}\033[0m')
             gc.add_global_context(f'旁白：{line}')
+    return minutes
 
 
 # ═══════════════════ 主循环 ═══════════════════
@@ -343,19 +327,23 @@ while True:
     snapshot_npcs(round_no, 'before', gc.all_npc_list)
     snapshot_scene(round_no, 'before', gc)
 
+    # 回合开始位置：N8 靠「回合前 → 回合后」的位置差算移动耗时，
+    # 这样 {移动} 标记和自由文本移动（"我来到青木山脉"）两条路都能覆盖
+    loc_before = gc.player.player_dict['当前状态CurrentState'].get('当前所处位置', '')
+
     logger.info(f'{player_name} 输入：{player_input}')
     gc.add_context_all(f'{player_name}（玩家）：{player_input}')
 
-    # ── N2: 事件判断 ──
-    N2_事件判断(player_input)
+    # ── N2: 事件判断（同时产出移动方式/声明耗时，供 N8 折算） ──
+    n2_result = N2_事件判断(player_input)
 
     # ── N3: 感知分发 ──
     n3_result = N3_感知分发()
 
-    # ── N4→N5→N6: 并行 per-NPC ──
-    npc_responses, narrations = N4N5N6_并行(n3_result)
+    # ── N45→N6: 并行 per-NPC ──
+    npc_responses, narrations, npc_minutes = N45N6_并行(n3_result)
 
-    # ── N7+N8: 传播 + 时间 并行 ──
+    # ── N7: 纯规则地段传播（在移动落盘前，按出发地判定） ──
     tasks = [(nm, npc, msg) for nm, npc, msg in [
         (nm, gc.all_npc_list.get_npc(nm), msg)
         for nm, msg in {
@@ -363,15 +351,28 @@ while True:
             **(n3_result.get('事件涉及/潜在npc', {}) or {}),
         }.items()
     ] if msg and msg.strip() and npc]
-    n7_result, n8_minutes = N7N8_并行(
-        n3_result, tasks, npc_responses, player_input, move_info,
+    n7_result = N7_传播(n3_result, tasks)
+
+    # ── 玩家自主行动（无NPC时，该层自行估算耗时） ──
+    self_minutes = 玩家自主行动(player_input, bool(npc_responses), bool(move_info))
+
+    # ── N8: 纯规则耗时聚合 → 推进时钟 ──
+    # 目的位置优先取 {移动} 标记的目标（此刻主循环还没落盘），否则取 N6 玩家增量改后的位置
+    loc_after = (move_info or {}).get('to') or \
+        gc.player.player_dict['当前状态CurrentState'].get('当前所处位置', '')
+    n8_minutes = n8_time.process(
+        game_clock=gc.game_clock,
+        npc_minutes=npc_minutes,
+        player_minutes=self_minutes,
+        from_loc=loc_before,
+        to_loc=loc_after,
+        style=n2_result.get('move_style', ''),
+        declared_minutes=n2_result.get('move_declared_minutes', 0),
+        world_layer=gc.b1WorldLayer,
     )
 
     # ── N8 后: 移动落盘 ──
     N8后_处理移动(move_info, n8_minutes)
-
-    # ── 玩家自主行动（无NPC时） ──
-    玩家自主行动(player_input, n8_minutes, bool(npc_responses))
 
     # ── 后台心跳 ──
     round_no += 1

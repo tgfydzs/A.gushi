@@ -11,7 +11,7 @@ from common.log import get_logger
 from common import log as log_mod
 from common.save_load import SaveManager
 from common.base_cnf import BASE_PATH, SAVE_ROOT_PATH, SAVE_VERSION, WORLD_DATA_FILE, WORLD_DATA_SELECT, NPC_DATA_ROOT_PATH
-from common.small_tool import load_json_to_dict, walk_category_files, load_npc_list_from_json, apply_npc_delta, strip_empty_delta
+from common.small_tool import load_json_to_dict, walk_category_files, load_npc_list_from_json, apply_npc_delta
 from common import time_int
 from common.game_clock import GameClock
 from common.deferred_queue import DeferredQueue
@@ -252,16 +252,14 @@ class GameController:
         for t in rules:
             rule_text = t.get('规则原文', '')
             valid_rules = self.b1WorldLayer.dict.get('世界演变规则列表', [])
-            if rule_text not in valid_rules:
-                logger.warn(f'N9a 队列返回不在规则列表中的规则：{rule_text[:60]}')
-                continue
-            rule_idx = valid_rules.index(rule_text)
-
-            if n9_director and rule_idx in n9_director.triggered_rules:
-                continue
+            if rule_text in valid_rules:
+                rule_idx = valid_rules.index(rule_text)
+            else:
+                rule_idx = None
 
             if n9_director:
-                n9_director.triggered_rules[rule_idx] = t.get('进度', '初期')
+                if rule_idx is not None:
+                    n9_director.triggered_rules[rule_idx] = t.get('进度', '初期')
                 n9_director._last_rule_trigger_elapsed = getattr(getattr(self, 'game_clock', None), '_elapsed', 0)
 
             st = t.get('世界状态变更', {}) or {}
@@ -277,13 +275,11 @@ class GameController:
             public_view = t.get('玩家可见叙述', '')[:300]
             behind_view = t.get('幕后详情', '')[:300]
 
-            # 上下文写入不变
             if public_view and public_view.strip() and public_view != '暂无公开迹象':
                 self.add_context_all(f'世界事件（{progress}）：{public_view}')
             if behind_view:
                 self.add_director_context(f'世界事件幕后（{progress}）：{behind_view}')
 
-            # 提取摘要（取叙述前15字）
             short = ''
             if public_view and public_view.strip() and public_view != '暂无公开迹象':
                 short = public_view[:15].rstrip('，。！？')
@@ -315,37 +311,26 @@ class GameController:
         返回 (有行动的NPC名字列表, 传播条数)
         """
         acted_names = []
-        capped: set[str] = set()  # 追踪已截断的NPC，避免重复调用
-
-        def _maybe_cap(npc) -> None:
-            if npc.name not in capped:
-                npc.cap_fields()
-                capped.add(npc.name)
 
         npc_actions = msg.get('NPC自主行为', {}) or {}
         for npc_name, action_data in npc_actions.items():
-            if isinstance(action_data, str):
-                action_data = {'动作': action_data}
             action_text = action_data.get('动作', '') or ''
             npc_delta = action_data.get('NPC增量')
 
-            # get_npc 自带括号剥离（"血手（殷九娘）"→取"血手"做 in 匹配）
             npc = self.all_npc_list.get_npc(npc_name)
             if npc is None:
                 logger.warn(f'N9c队列NPC [{npc_name}] 未能匹配')
                 continue
             if npc_delta:
-                npc_delta = strip_empty_delta(npc_delta)
-                if npc_delta:
-                    npc = apply_npc_delta(npc, npc_delta)
-                    self.sync_npc_to_lists(npc)
+                npc = apply_npc_delta(npc, npc_delta)
+                self.sync_npc_to_lists(npc)
             if action_text:
                 obs_entry = f'（幕后行动）{action_text}'
                 if obs_entry not in npc.observation:
                     npc.observation.append(obs_entry)
                 acted_names.append(npc.name)
                 logger.info(f'📦 [{npc.name}] {action_text}')
-            _maybe_cap(npc)
+            npc.cap_fields()
 
         spread_count = 0
         for spread in (msg.get('剧情级传播', []) or []):
@@ -357,41 +342,37 @@ class GameController:
                     obs_entry = f'（情报·{method}）{info}'
                     if obs_entry not in npc.observation:
                         npc.observation.append(obs_entry)
-                    _maybe_cap(npc)
+                    npc.cap_fields()
             spread_count += 1
 
         return acted_names, spread_count
 
     def process_npc_pipeline(self, npc_name: str, npc: B3NPCLayer, should_print: bool,
-                             n4_reasoning, n5_response, n6_update, perception_msg: str):
+                             n45_layer, n6_update, perception_msg: str):
         """
-        单个NPC的完整 N4→N5→N6 流水线，供 ThreadPoolExecutor 并行调用。
+        单个NPC的完整 N45→N6 流水线，供 ThreadPoolExecutor 并行调用。
 
-        流水线：N4（推理）→ N5（回应）→ N6（收尾）
+        流水线：N45（推理+回应，合并了原N4/N5）→ N6（收尾+耗时）
 
         :param perception_msg: N3感知层分发的带方向消息（"玩家对你说：..."或"玩家对[名字]说：..."）
-        :return: (npc_final, response, should_print, player_delta, narration)
+        :return: (npc_final, response, should_print, player_delta, narration, minutes)
         """
         tag = '' if should_print else '（潜在）'
 
-        # N4 推理层（不接受玩家实例，更新待解释事件表）
-        npc_after_reasoning = n4_reasoning.reason_for_npc(npc, perception_msg)
-        logger.info(f'[{npc_name}]{tag} 推理完成')
-
-        # N5 回应层（不接受玩家实例，不修改NPC实例，仅产出回应+内心想法）
-        response_text, inner_thought = n5_response.response_say(
-            npc_after_reasoning, perception_msg, self.global_context.context
+        # N45 理解回应层（不接受玩家实例：推理更新待解释事件 → 据此生成回应+内心想法）
+        npc_after, response_text, inner_thought = n45_layer.response_for_npc(
+            npc, perception_msg, self.global_context.context
         )
+        logger.info(f'[{npc_name}]{tag} 理解回应完成')
         if should_print:
             logger.info(f'[{npc_name}] 回应：{response_text}')
-        logger.info(f'[{npc_name}]{tag} 内心想法：{inner_thought}')
 
-        # N6 更新层（唯一接受玩家实例的层，收尾落实所有客观操作）
-        npc_final, player_delta, narration = n6_update.update_for_npc(
-            npc_after_reasoning, self.player, perception_msg, inner_thought
+        # N6 更新层（唯一接受玩家实例的层，收尾落实所有客观操作 + 估算本轮耗时）
+        npc_final, player_delta, narration, minutes = n6_update.update_for_npc(
+            npc_after, self.player, perception_msg, inner_thought
         )
 
-        return npc_final, response_text, should_print, player_delta, narration
+        return npc_final, response_text, should_print, player_delta, narration, minutes
 
     # ===================== 存档 / 读档 =====================
 

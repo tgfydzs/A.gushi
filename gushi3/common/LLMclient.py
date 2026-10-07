@@ -22,6 +22,49 @@ def _is_retryable(e: Exception) -> bool:
         return e.response.status_code in _RETRYABLE_STATUSES
     return False
 
+
+def _extract_reply(res_data: dict) -> tuple:
+    """
+    从响应里取出正文和推理内容。
+
+    :return: (reply: str, reasoning_chars: int)
+             reasoning_chars > 0 说明该模型是推理模型，思考过程不计入 content
+    """
+    msg = (res_data.get("choices") or [{}])[0].get("message") or {}
+    reply = (msg.get("content") or "").strip()
+    reasoning = msg.get("reasoning_content") or ""
+    return reply, len(reasoning)
+
+
+def _fmt_usage(res_data: dict) -> str:
+    """
+    格式化 token 用量。各家字段名不完全一致，能取到多少记多少。
+
+    关键指标：
+      in       prompt_tokens —— 输入规模（大 → 优化 prompt/裁剪表）
+      out      completion_tokens —— 输出规模（大 → 砍输出字段）
+      reason   reasoning_tokens —— **推理模型的隐藏思考**，不计入 out，
+               但实实在在耗时。这一项大意味着砍 prompt 没用，得换模型。
+      cache_hit prompt 缓存命中 —— 省钱指标，不影响延迟
+    """
+    usage = res_data.get("usage") or {}
+    if not usage:
+        return 'tokens: (无usage字段)'
+
+    parts = [f"in={usage.get('prompt_tokens', '?')}",
+             f"out={usage.get('completion_tokens', '?')}"]
+
+    details = usage.get("completion_tokens_details") or {}
+    reason = details.get("reasoning_tokens") or usage.get("reasoning_tokens")
+    if reason:
+        parts.append(f"reason={reason}")
+
+    hit = usage.get("prompt_cache_hit_tokens")
+    if hit is not None:
+        parts.append(f"cache_hit={hit}")
+
+    return 'tokens: ' + ' '.join(parts)
+
 # ================== 模型基础配置 ======================
 # 默认系统提示词
 DEFAULT_SYSTEM_PROMPT = "你是专业智能助手，回答简洁准确，逻辑清晰"
@@ -34,21 +77,30 @@ class LLMClient:
     上下文完全由调用方通过入参传入管理，无自动记忆会话逻辑
     """
 
-    def __init__(self):
-        """初始化客户端基础鉴权信息与请求头"""
+    def __init__(self, layer: str = ''):
+        """
+        :param layer: 层名（如 'N2'/'N3'/'N45'/'N9'），用于查 LAYER_MODEL_OVERRIDE 选模型。
+                      未配置覆写时回落到全局 MODEL_NAME。
+        """
+        self.layer = layer or ''
         self.api_key = API_KEY
         self.base_url = BASE_URL
-        self.model_name = MODEL_NAME
+        self.model_name = (LAYER_MODEL_OVERRIDE.get(self.layer) if self.layer else None) or MODEL_NAME
         self.default_system_prompt = DEFAULT_SYSTEM_PROMPT
 
-        _llm_log.info(f"LLMClient 初始化 | url={self.base_url} | model={self.model_name} | "
-                      f"key={self.api_key[:12] if self.api_key else 'None'}...")
+        _llm_log.info(f"LLMClient 初始化 | layer={self.layer or '-'} | url={self.base_url} | "
+                      f"model={self.model_name} | key={self.api_key[:12] if self.api_key else 'None'}...")
 
         # 请求固定头部
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+
+        # 复用连接池：省掉每次调用的 TCP+TLS 握手（一轮流水线有十几次调用）
+        # urllib3 的 PoolManager 是线程安全的，N4-N6 的并行线程可共享
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
 
     def chat(
         self,
@@ -86,17 +138,19 @@ class LLMClient:
         last_err = None
         for attempt in range(_MAX_RETRIES):
             try:
-                resp = requests.post(
+                resp = self.session.post(
                     url=self.base_url,
-                    headers=self.headers,
                     json=payload,
                     timeout=90
                 )
-                elapsed = time.time() - t0
-                _llm_log.info(f"chat({self.model_name}) 请求完成，耗时 {elapsed:.1f}s")
+                # 先判成败再记日志——失败请求不该留下"完成"记录，会污染延迟统计
                 resp.raise_for_status()
                 res_data = resp.json()
-                reply = res_data["choices"][0]["message"]["content"].strip()
+                elapsed = time.time() - t0
+                reply, reason_chars = _extract_reply(res_data)
+                reason_info = f" reasoning={reason_chars}字" if reason_chars else ''
+                _llm_log.info(f"chat({self.model_name}) 完成 | {elapsed:.1f}s | "
+                              f"{_fmt_usage(res_data)}{reason_info}")
                 return reply
             except Exception as e:
                 last_err = e
@@ -107,8 +161,8 @@ class LLMClient:
                     time.sleep(backoff)
                 else:
                     _llm_log.error(f"chat 请求失败(耗时{elapsed:.1f}s)：{str(e)}")
-                    return f"请求失败：{str(e)}"
-        return f"请求失败：{str(last_err)}"
+                    raise
+        raise RuntimeError(f"chat 请求失败：{str(last_err)}")
 
 
     def chat_by_context(self, context: list, label: str = '', temperature: float = None):
@@ -130,17 +184,19 @@ class LLMClient:
         last_err = None
         for attempt in range(_MAX_RETRIES):
             try:
-                resp = requests.post(
+                resp = self.session.post(
                     url=self.base_url,
-                    headers=self.headers,
                     json=payload,
                     timeout=90
                 )
-                elapsed = time.time() - t0
-                _llm_log.info(f"chat_by_context({self.model_name}){tag} 请求完成，耗时 {elapsed:.1f}s")
+                # 先判成败再记日志——失败请求不该留下"完成"记录，会污染延迟统计
                 resp.raise_for_status()
                 res_data = resp.json()
-                reply = res_data["choices"][0]["message"]["content"].strip()
+                elapsed = time.time() - t0
+                reply, reason_chars = _extract_reply(res_data)
+                reason_info = f" reasoning={reason_chars}字" if reason_chars else ''
+                _llm_log.info(f"chat_by_context({self.model_name}){tag} 完成 | {elapsed:.1f}s | "
+                              f"{_fmt_usage(res_data)}{reason_info}")
                 return reply
             except Exception as e:
                 last_err = e
@@ -151,8 +207,8 @@ class LLMClient:
                     time.sleep(backoff)
                 else:
                     _llm_log.error(f"chat_by_context({self.model_name}){tag} 请求失败(耗时{elapsed:.1f}s)：{str(e)}")
-                    return f'请求失败{str(e)}'
-        return f'请求失败{str(last_err)}'
+                    raise
+        raise RuntimeError(f"chat_by_context{tag} 请求失败：{str(last_err)}")
 
 
 

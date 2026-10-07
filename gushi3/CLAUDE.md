@@ -42,24 +42,28 @@ name = '魔搭'  # 使用 ModelScope Qwen3.5-27B
 ## 架构总览：N1→N9 九层流水线
 
 ```
-N1 玩家输入 ─→ N2 事件层 ─→ N3 感知层 ─→ [N4→N5→N6 并行] ─→ [N7+N8 并行] ─→ N9 导演层 ─→ 循环
-                     ↑                                                                  │
-                     └──────────────── 导演上下文(director_context) 持久化 ────────────────┘
+N1 玩家输入 ─→ N2 事件层 ─→ N3 感知层 ─→ [N45→N6 并行] ─→ N7 传播 ─→ N8 计时 ─→ N9 导演层 ─→ 循环
+                     ↑                                                              │
+                     └──────────── 导演上下文(director_context) 持久化 ──────────────┘
 ```
+
+**关键路径 LLM 跳数：N2 → N3 → N45 → N6（4跳）**，N7/N8 为纯规则不占跳数，N9 已后台化。
+历史演进：原 N2→N3→N4→N5→N6→N8 共 6 跳，N4+N5 合并为 N45（3跳→2跳），N8 的估算并入 N6（-1跳）。
 
 ### 每层职责速查
 
 | 层 | 文件 | LLM? | 职责 |
 |----|------|------|------|
 | N1 输入 | `src/test/N2_contextRetrieval.py` | 否 | 命令处理(`/save /load /context /npcs /player`)、移动标记(`{移动}`)、撤回(`!!`) |
-| N2 事件 | `common/N2_contextRetrieval.py` | 是 | 判断新事件/延续事件，增删 event_npc / related_npc |
+| N2 事件 | `common/N2_contextRetrieval.py` | 是 | 判断新事件/延续事件，增删 event_npc / related_npc，判断移动方式与声明耗时（供 N8 折算） |
 | N3 感知 | `common/N3_informationFiltering.py` | 是 | 为每个NPC分发感知内容，产出地段传播数据 |
-| N4 推理 | `common/N4_reasoning.py` | 是 | NPC更新待解释事件表 |
-| N5 回应 | `common/N5_response.py` | 是 | NPC生成回应+内心想法(不接受玩家实例) |
-| N6 更新 | `common/N6_update.py` | 是 | NPC收尾，唯一接受玩家实例的层，产出增量delta+旁白 |
+| **N45 理解回应** | `common/N45_reason_response.py` | 是 | 推理更新待解释事件**→据此**生成回应+内心想法（原N4+N5合并，不接受玩家实例） |
+| N6 更新 | `common/N6_update.py` | 是 | NPC收尾，唯一接受玩家实例的层，产出增量delta+旁白+**本轮耗时分钟** |
 | N7 传播 | `common/N7_propagation.py` | 否 | 纯规则：地段消息在地点树中逐级扩散为传闻 |
-| N8 时间 | `common/N8_time.py` | 混合 | 规则(移动耗时)+LLM(对话估算)，推进 GameClock |
+| N8 时间 | `common/N8_time.py` | 否 | **纯规则聚合**：活动耗时(NPC取大)+移动耗时(段数×系数)，推进 GameClock |
 | N9 导演 | `common/N9_director.py` | 是 | 世界暗线推动、环境叙事、NPC幕后行为、剧情级传播 |
+
+> `common/N4_reasoning.py` 与 `common/N5_response.py` 已被 N45 取代，保留在仓库中但不再被调用。
 
 ### 数据基础层
 
@@ -79,25 +83,62 @@ N1 玩家输入 ─→ N2 事件层 ─→ N3 感知层 ─→ [N4→N5→N6 并
 | 事件上下文 | `event_context` | 仅AI可见(LLM层) | 新事件时清空 |
 | 导演上下文 | `director_context` | 仅AI可见(N2/N3/N9) | 持久，不随事件清空 |
 
-### N4→N5→N6 并行流水线
+### N45→N6 并行流水线
 
-每个NPC（包含事件NPC和潜在NPC）并行经过 N4→N5→N6，使用 `ThreadPoolExecutor(max_workers=6)`：
+每个NPC（包含事件NPC和潜在NPC）并行经过 N45→N6，使用 `ThreadPoolExecutor(max_workers=6)`：
 
 ```
 N3 分发信息
   ↓
 submission per NPC:
-  N4 reason_for_npc() → 推理，更新待解释事件表
-  N5 response_say()   → 产出回应+内心想法（不接受玩家实例）
-  N6 update_for_npc() → 收尾，产出增量delta + 旁白（唯一接受玩家实例的层）
+  N45 response_for_npc() → 推理（更新待解释事件表）→ 据此产出回应+内心想法（不接受玩家实例）
+  N6  update_for_npc()   → 收尾，产出增量delta + 旁白 + 本轮耗时（唯一接受玩家实例的层）
   ↓
 merge_delta() 合并多NPC的玩家增量 → apply_player_delta() 写回玩家
 sync_npc_to_lists() 同步更新后的NPC到NPC列表
 ```
 
-### N7+N8 并行
+**为什么 N4+N5 能合而 N5+N6 不能合**：判定标准是**信息集**而非职责——
+N4 与 N5 的输入信息集本就相同（NPC实例 + 感知输入），N5 只多一个全局对话上下文，合并没有把受限信息泄露给不该看的层；
+而 N5+N6 合并会把 `玩家实例` 喂给 N5，直接破坏「N6 是唯一接受玩家实例的层」这条约束。
 
-N7（传播层，纯规则零耗时）和 N8（时间层，可能有LLM调用）通过 `ThreadPoolExecutor(max_workers=2)` 并行。
+合并后 N45 的 `npc实例` 增量经 `_sanitize_npc_delta()` 强制只放行 `待解释事件PendingReasoning`，其余字段一律丢弃，原 N4「不改其他表」的硬约束不变。
+
+### N7 → N8 顺序执行（均为纯规则）
+
+N7（地段传播）与 N8（耗时聚合）都不调用 LLM，无并行必要。执行顺序：
+
+1. **N7 传播** — 在移动落盘**之前**执行，按出发地判定传播范围（原先与 N8 并行时此处存在竞态）
+2. **玩家自主行动**（仅无NPC时）— N6-Player 自行估算耗时，不再依赖 N8 先给出时间跨度
+3. **N8 聚合** — `max(NPC耗时) + 移动耗时`，下限1分钟，随后推进 GameClock
+
+### 移动耗时 = 客观距离 × 玩家输入
+
+移动耗时是**两个来源的综合**，缺一不可：
+
+| 来源 | 提供什么 | 谁提供 |
+|------|---------|--------|
+| 客观位置 | 基准耗时（走多远） | N8 规则：地点树 LCA 段数 × `移动耗时_每段分钟` |
+| 玩家输入 | 折算系数（怎么走的、急不急） | N2 判断的 `move_style`（步行/疾行/骑马/御剑飞行…） |
+| 玩家输入 | **声明耗时，优先级最高** | N2 判断的 `move_declared_minutes` |
+
+```
+移动分钟 = 声明分钟                                    （玩家明说了"赶了半个月路"）
+         | 段数 × 每段分钟 ÷ 方式系数[move_style]        （否则按距离×方式折算）
+```
+
+**判定依据是「实际位置变化」（`from_loc` → `to_loc`），不是 `{移动}` 标记**——
+玩家完全可能在自由文本里直接说"我来到青木山脉"，此时位置是 N6 的玩家增量改的，
+标记路径拿不到。这样标记移动和自由文本移动两条路都覆盖。
+
+方式系数表默认内置在 `N8_Time.DEFAULT_STYLE_FACTORS`（步行=1.0，骑马=4，
+御剑飞行=20，传送=100…），可由世界配置 `移动方式系数` 整体覆写以适配不同世界观。
+匹配是**子串式**的（"骑着快马疾驰"能命中"疾驰"），未识别的写法安全回落成步行——
+只是会偏慢，不会崩。所以表里要放足近义写法：LLM 输出的方式是自由文本，
+提示词给了参考词，但模型经常自己造词。
+
+**分工契约**：N6 / N6-Player 只估「原地活动」时间，移动时间由 N8 单独补——
+两边 prompt 都写明了这点，避免重复计时。N2 也被告知「只判断方式，不要自己算时间」。
 
 ### 数据驱动架构
 
@@ -113,9 +154,25 @@ N7（传播层，纯规则零耗时）和 N8（时间层，可能有LLM调用）
 | `NPC_记忆上限` | B3NPCLayer.MAX_MEMORY | 30 |
 | `NPC_待推理上限` | B3NPCLayer.MAX_PENDING | 10 |
 | `玩家初始数据` | `b1WorldLayer.get_config('玩家初始数据', 'data/player/default.json')` | 由世界配置决定 |
+| `移动耗时_每段分钟` | `world_layer.get_config('移动耗时_每段分钟', 10)` | 10 |
+| `移动方式系数` | `world_layer.get_config('移动方式系数', DEFAULT_STYLE_FACTORS)` | 见 `N8_Time.DEFAULT_STYLE_FACTORS` |
 
 新增配置项只需在 global.json 的 `世界配置` 中添加键值对，代码中通过 `get_config(key, default)` 读取。
 已有默认兜底，新增配置项不会破坏现有世界。
+
+### 分层模型路由（提速用）
+
+`base_cnf.LAYER_MODEL_OVERRIDE` 可按**层名**覆写模型；未列出的层回落到 `MODEL_NAME`：
+
+```python
+LAYER_MODEL_OVERRIDE = {'N2': 'deepseek-v4-lite', 'N3': 'deepseek-v4-lite'}  # 例
+```
+
+适合换小模型的层：N2（事件分类）、N3（感知分发）——都是结构化浅任务。
+创作类重任务（N45 回应、N9b 叙事）建议保留主模型。各层构造 `LLMClient('层名')` 即生效，prompt 无需改动。
+
+`LLMClient` 内部持有实例级 `requests.Session` 复用连接池，省掉每次调用的 TCP+TLS 握手；
+轮询到 N45/N6 的 6 个并行线程共享同一实例的 Session。
 
 ### N9 导演层（三路并行）
 
@@ -138,26 +195,25 @@ N9 拆分为三个独立的 LLM 调用，通过 `ThreadPoolExecutor(max_workers=
 ## 关键代码模式
 
 ### N层处理器模式
-每个N层文件（如 `common/N4_reasoning.py`）遵循相同模式：
-1. 构造函数 `__init__()` 创建 `LLMClient` 和 `logger`
-2. 主方法（如 `reason_for_npc()`）读取 system prompt 文件，组装上下文，调用 `cli.chat_by_context()`，用 `safe_json_loads()` 解析JSON
+每个N层文件（如 `common/N45_reason_response.py`）遵循相同模式：
+1. 构造函数 `__init__()` 创建 `LLMClient('层名')` 和 `logger`
+2. 主方法（如 `response_for_npc()`）读取 system prompt 文件，组装上下文，调用 `cli.chat_by_context()`，用 `safe_json_loads()` 解析JSON
 3. 所有system prompt在 `prompt/` 目录，修改prompt无需改代码
 
 ### LLM调用模式
 ```python
-# 读取system prompt
-with open(os.path.join(BASE_PATH, r'prompt\N4_reasoning_sys.txt'), 'r') as f:
-    sys_prompt = f.read()
+# 读取system prompt（load_prompt 会自动替换 {占位符} 为 data/prompt/{层}_custom/*.md）
+sys_prompt = load_prompt('N45_reason_response_sys.txt')
 
 # 组装上下文
 all_context = [{'role': 'system', 'content': sys_prompt}]
 all_context.append({'role': 'user', 'content': json.dumps(user_input, ensure_ascii=False)})
 
 # 调用LLM
-reply = self.cli.chat_by_context(all_context, label='N4')
+reply = self.cli.chat_by_context(all_context, label='N45')
 
 # 解析JSON（自动剥离markdown代码块、降级解析）
-result = safe_json_loads(reply, label='N4')
+result = safe_json_loads(reply, label='N45')
 ```
 
 ### 增量更新模式(N6层)
@@ -186,11 +242,14 @@ gushi3/
 │   ├── LLMclient.py                   ← OpenAI兼容的LLM调用封装（无状态）
 │   ├── N2_contextRetrieval.py         ← N2 事件层
 │   ├── N3_informationFiltering.py     ← N3 感知层
-│   ├── N4_reasoning.py                ← N4 推理层
-│   ├── N5_response.py                 ← N5 回应层
-│   ├── N6_update.py                   ← N6 更新层
+│   ├── N45_reason_response.py         ← N45 理解回应层（原N4+N5合并）
+│   ├── N4_reasoning.py                ← 【已弃用】被 N45 取代，保留备查
+│   ├── N5_response.py                 ← 【已弃用】被 N45 取代，保留备查
+│   ├── N6_update.py                   ← N6 更新层（含本轮耗时估算）
 │   ├── N7_propagation.py             ← N7 传播层（纯规则）
-│   ├── N8_time.py                     ← N8 时间层
+│   ├── N8_time.py                     ← N8 时间层（纯规则聚合）
+│   ├── deferred_queue.py              ← 后台心跳产出队列（N9a/N9b/N9c 结果）
+│   ├── heartbeat.py                   ← 心跳管理器（后台跑 N9a/N9b/N9c）
 │   ├── N9_director.py                 ← N9 导演层（带状态：triggered_rules等）
 │   ├── game_controller.py            ← GameController：状态管理/存档/命令处理
 │   ├── game_clock.py                  ← GameClock：独立游戏时间（24h/时辰制）
@@ -211,11 +270,12 @@ gushi3/
 ├── prompt/                            ← System Prompt（txt文本，修改无需改代码）
 │   ├── N2_contextRetrieval_sys.txt
 │   ├── N3_informationFiltering_sys.txt
-│   ├── N4_reasoning_sys.txt
-│   ├── N5_response_sys.txt
+│   ├── N45_reason_response_sys.txt  ← 理解+回应（推理→回应一次完成）
+│   ├── N4_reasoning_sys.txt      ← 【已弃用】
+│   ├── N5_response_sys.txt       ← 【已弃用】
 │   ├── N6_update_sys.txt
 │   ├── N6_player_sys.txt
-│   ├── N8_time_ability_sys.txt
+│   ├── N8_time_ability_sys.txt   ← 【已弃用】N8 已改纯规则
 │   ├── N9a_rule_sys.txt          ← 规则触发（低温度）
 │   ├── N9b_narration_sys.txt     ← 环境叙事（高温度）
 │   └── N9c_behavior_sys.txt      ← NPC行为+情报传播（中温度）
@@ -251,11 +311,15 @@ gushi3/
 4. **信息隔离**：每层只给LLM最小上下文；event_context在新事件时清空；director_context不向玩家暴露
 5. **代码层防幻觉**：所有LLM返回的NPC名、规则名、位置名都经过子串匹配校验
 6. **增量输出**：N6层使用 `{"增加":..., "删减":...}` 增量格式，`strip_empty_delta()` 清理空值
-7. **N6唯一接受玩家实例**：N4和N5不接受玩家数据，防止LLM越权修改玩家状态
+7. **N6唯一接受玩家实例**：N45（原N4/N5）不接受玩家数据，防止LLM越权修改玩家状态
 8. **可撤回**：每轮执行前全量快照，`!!` 可回滚
+9. **合并层级按信息集判定**：两层能合 ⟺ 输入信息集本就相同、且合并后不把受限信息喂给不该看的层。
+   禁止为了减跳数牺牲第4条（信息隔离）和第7条（N6唯一接受玩家实例）——
+   这正是 N4+N5 可合、而 N5+N6 不可合的原因。
 
 ## 版本关系
 
 - **gushi1** — 初始版本，10层固定流水线，Engine类调度，使用 formal dataclass
 - **gushi2** — 重构为Node架构，引入UpdateEngine作为唯一写入口，Schema下按数据模型分层
 - **gushi3（当前）** — 简化设计，N2→N9 直接调用，GameController管理状态，增量delta更新模式，N9导演层带世界规则触发
+- **gushi3 · 层级整合** — 关键路径由6跳压到4跳：N4+N5合并为 N45（信息集相同），N8 的 LLM 估算并入 N6 后降级为纯规则聚合；新增分层模型路由与连接池复用

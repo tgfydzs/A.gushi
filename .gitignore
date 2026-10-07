@@ -12,3 +12,11 @@ venv/
 .idea
 # 日志
 *.log
+
+# 跑测产物：可重新生成（真实调 API 重跑即可复现），不进版本库
+#   debug_rounds/    = /debug 模式下每轮的 LLM 原始输出 + 快照
+#   ablation_runs/   = 消融实验每组每遍的逐轮留档
+# 注意 ablation_report*.md 与 ablation_raw*.json 是**报告与缓存**，仍然跟踪——
+# 它们让 `run_ablation.py --report-only` 不调 API 就能出报告。
+gushi4/debug_rounds/
+gushi4/src/test/ablation_runs/

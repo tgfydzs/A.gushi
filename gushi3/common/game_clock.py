@@ -126,11 +126,13 @@ class GameClock:
         if self._start_dt:
             h = (self._start_dt + timedelta(minutes=self._elapsed)).hour
             return h >= 22 or h < 6
-        # 时辰制：酉时(17-19点)后算夜晚
+        # 时辰制：与 24h 分支对齐（22:00–06:00 为夜晚）
+        # 对应时辰：亥(11)、子(0)、丑(1)、寅(2)、卯(3)
+        # 注意 idx 模 12 回绕，深夜子丑寅会回到 0-2，必须用 `or idx <= 3` 覆盖
         if self._time_format == "时辰制":
             total_ke = self._start_shichen_idx * 4 + self._start_ke + self._elapsed // _MINUTES_PER_KE
             idx = total_ke // 4 % 12
-            return idx >= 9  # 酉时及之后
+            return idx >= 11 or idx <= 3  # 亥子丑寅卯 → 深夜/凌晨
         return False
 
     def is_daytime(self) -> bool:

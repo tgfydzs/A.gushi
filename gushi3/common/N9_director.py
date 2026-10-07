@@ -6,7 +6,7 @@ N9 导演层 — 三个独立子任务。
 import json
 
 from common.log import get_logger
-from common.small_tool import *
+from common.small_tool import load_prompt, safe_json_loads
 from common.LLMclient import LLMClient
 
 
@@ -19,7 +19,7 @@ class N9_Director:
 
     def __init__(self, logger=None):
         self.logger = logger if logger else get_logger('N9_Director')
-        self.cli = LLMClient()
+        self.cli = LLMClient('N9')
 
         # 已触发规则追踪（仅在主线程 consume 时写入）
         self.triggered_rules: dict[int, str] = {}
@@ -57,7 +57,7 @@ class N9_Director:
         }
         return self._llm_call(sys_prompt, user_input, self.TEMPERATURE_RULE, 'N9a')
 
-    def _process_narration(self, player_loc, time_str, world_state_list, event_summary) -> list:
+    def _process_narration(self, player_loc, time_str, world_state_list, event_summary) -> dict:
         sys_prompt = self._load_prompt('N9b_narration_sys.txt')
         user_input = {
             '玩家当前位置': player_loc,
@@ -67,15 +67,7 @@ class N9_Director:
             '最近环境叙事': self.recent_narrations[-5:],
             '已叙述过的主题': list(self.narrated_themes),
         }
-        result = self._llm_call(sys_prompt, user_input, self.TEMPERATURE_NARRATION, 'N9b')
-        if isinstance(result, list):
-            return result
-        if isinstance(result, dict):
-            for v in result.values():
-                if isinstance(v, list):
-                    return v
-        self.logger.warn(f'N9b 返回格式异常：{type(result)}')
-        return []
+        return self._llm_call(sys_prompt, user_input, self.TEMPERATURE_NARRATION, 'N9b')
 
     def _process_behavior(self, all_npc_names, event_summary, dc_trimmed,
                           npc_responses, n7_result, world_state_list) -> dict:
@@ -91,12 +83,7 @@ class N9_Director:
             'N7传播结果': n7_result or {},
             '当前世界状态': world_state_list,
         }
-        result = self._llm_call(sys_prompt, user_input, self.TEMPERATURE_BEHAVIOR, 'N9c')
-        if not isinstance(result, dict):
-            return {'NPC自主行为': {}, '剧情级传播': []}
-        result.setdefault('NPC自主行为', {})
-        result.setdefault('剧情级传播', [])
-        return result
+        return self._llm_call(sys_prompt, user_input, self.TEMPERATURE_BEHAVIOR, 'N9c')
 
     # ===================== 公共工具 =====================
 
@@ -109,17 +96,8 @@ class N9_Director:
             {'role': 'system', 'content': sys_prompt},
             {'role': 'user', 'content': json.dumps(user_input, ensure_ascii=False)},
         ]
-        try:
-            reply = self.cli.chat_by_context(all_context, label=label, temperature=temperature)
-            return safe_json_loads(reply, label=label)
-        except Exception as e:
-            self.logger.error(f'{label} 调用失败：{e}')
-            if label == 'N9a':
-                return {'规则触发': []}
-            elif label == 'N9b':
-                return []
-            else:
-                return {'NPC自主行为': {}, '剧情级传播': []}
+        reply = self.cli.chat_by_context(all_context, label=label, temperature=temperature)
+        return safe_json_loads(reply, label=label)
 
     # ===================== 序列化 =====================
 

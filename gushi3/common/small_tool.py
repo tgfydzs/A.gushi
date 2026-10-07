@@ -19,6 +19,8 @@ logger = get_logger("small_tool")
 _LAYER_PROMPT_MAP = {
     'N3_informationFiltering_sys.txt': 'N3',
     'N5_response_sys.txt': 'N5',
+    # N45 复用了原 N5 的客制化占位符（如 {输出约束示例}）
+    'N45_reason_response_sys.txt': 'N5',
     'N6_update_sys.txt': 'N6',
     'N6_player_sys.txt': 'N6_player',
     'N9b_narration_sys.txt': 'N9b',
@@ -61,8 +63,9 @@ def safe_json_loads(text: str, label: str = "") -> dict:
     安全解析LLM返回的JSON，处理常见格式问题：
       1. 剥离 markdown 代码块包裹（```json ... ```）
       2. 尝试 strict 模式解析
-      3. 降级 strict=False（允许字符串内嵌控制字符如 \\n \\t \\r）
-      4. 仍失败则记录原始文本并抛出
+      3. 截断到最后一个 } 或 ]（处理LLM在JSON后追加额外文本）
+      4. 降级 strict=False（允许字符串内嵌控制字符如 \\n \\t \\r）
+      5. 仍失败则记录原始文本并抛出
 
     :param text:  LLM 原始返回文本
     :param label: 调用方标识，用于日志定位
@@ -101,63 +104,6 @@ def safe_json_loads(text: str, label: str = "") -> dict:
         logger.error(f'safe_json_loads[{label}] 解析失败: {e}')
         logger.error(f'safe_json_loads[{label}] 原始文本(前2000字符): {raw[:2000]}')
         raise
-
-
-# ===================== NPC名称模糊匹配 =====================
-
-def _extract_bare_names(name_str: str) -> list[str]:
-    """
-    从复合NPC名中提取纯名字部分。
-    "赵工（工地工友，曾用）、赵铁手（黑户社区，现用）" → ["赵工", "赵铁手"]
-    "老钱（黑市情报贩子，现用）、钱四海（本名）" → ["老钱", "钱四海"]
-    """
-    names = [n.strip() for n in name_str.replace('，', '、').split('、')]
-    result = []
-    for n in names:
-        # 取第一个括号前的内容作为纯名
-        bare = n.split('（')[0].split('(')[0].strip()
-        if bare:
-            result.append(bare)
-    return result
-
-
-def resolve_npc_name(partial: str, valid_names: list[str] | set[str]) -> str | None:
-    """
-    将LLM返回的部分名称匹配为完整NPC名。
-
-    匹配策略（按优先级）：
-    1. 精确匹配完整名
-    2. 子串匹配：partial 是某个完整名的子串
-    3. 纯名匹配：提取双方纯名（括号前部分），做交叉包含匹配
-       例："赵铁手（本名）"的纯名=[赵铁手]，匹配目标纯名=["赵工","赵铁手"] → 命中
-
-    :param partial: LLM输出的部分名称
-    :param valid_names: 全部合法NPC完整名
-    :return: 匹配到的完整名，未匹配返回None
-    """
-    if not partial or not valid_names:
-        return None
-
-    # 1. 精确匹配
-    if partial in valid_names:
-        return partial
-
-    # 2. 子串匹配
-    for full_name in valid_names:
-        if partial in full_name:
-            return full_name
-
-    # 3. 纯名匹配：提取括号前名字部分交叉比对
-    partial_bare = _extract_bare_names(partial)
-    if partial_bare:
-        for full_name in valid_names:
-            full_bare = _extract_bare_names(full_name)
-            for pb in partial_bare:
-                for fb in full_bare:
-                    if pb in fb or fb in pb:
-                        return full_name
-
-    return None
 
 
 # ===================== 增量合并工具 =====================
@@ -263,35 +209,6 @@ def merge_delta(target: dict, source: dict):
 
 
 
-
-def strip_empty_delta(delta: dict) -> dict:
-    """
-    清理增量中的空值：移除值为空list/空dict/空字符串的字段。
-    用于LLM输出后处理，确保"未变化字段不出现"。
-
-    :param delta: {"增加": {...}, "删减": {...}}
-    :return: 清理后的delta（可能为空dict）
-    """
-    if not delta:
-        return {}
-    cleaned = {}
-    for section_key in ('增加', '删减'):
-        section = delta.get(section_key, {})
-        if not section or not isinstance(section, dict):
-            continue
-        filtered = {}
-        for field, value in section.items():
-            # 空list、空dict、空字符串 → 跳过
-            if isinstance(value, list) and len(value) == 0:
-                continue
-            if isinstance(value, dict) and len(value) == 0:
-                continue
-            if isinstance(value, str) and value == '':
-                continue
-            filtered[field] = value
-        if filtered:
-            cleaned[section_key] = filtered
-    return cleaned
 
 
 def load_json_to_dict(file_path: str) -> Dict[str, Any]:
