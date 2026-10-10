@@ -14,7 +14,7 @@ gushi4 端到端干跑 —— 用**假 LLM** 跑完整轮次，验证管线闭�
   - 时钟有没有推进
 
 跑法：
-    cd E:/A.gushi/gushi4 && python src/test/dry_run.py
+    cd <项目根> && python src/test/dry_run.py
 """
 
 import os

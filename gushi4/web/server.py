@@ -38,13 +38,17 @@ if _ROOT not in sys.path:
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from common.engine import GameEngine
+from common.engine import GameEngine, map_view_of
 from common.log import get_logger
 
 logger = get_logger('WebServer')
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 
 app = Flask(__name__, static_folder=None)      # 静态文件自己管，见 index()
+# ⚠️ **不许按键排序**。Flask 默认 `sort_keys=True`，而 `.map` 的属性是**按书写顺序**
+# 吐的——一排序，编辑器原样存回就会把整个文件重排（试过一次：改一个字段 → 159 行 diff）。
+# `map_io.canonicalize` 是第二道保险，但这里不排序才是"编辑器看到的就是文件里的顺序"。
+app.json.sort_keys = False
 engine = GameEngine(session_id='gushi4-web')
 
 # 回合调度：同一时刻只允许一个回合在跑
@@ -56,7 +60,7 @@ _state_lock = threading.Lock()
 # 回合执行
 # ═══════════════════════════════════════════════════════════════
 
-def _round_worker(text: str, move_info: dict):
+def _round_worker(text: str):
     """
     一个回合的完整过程（对应终端主循环里的一次迭代）：
 
@@ -67,7 +71,7 @@ def _round_worker(text: str, move_info: dict):
     try:
         engine.consume_background()
         engine.show_scene()
-        engine.run_round(text, move_info)
+        engine.run_round(text)
     except Exception as e:
         logger.error(f'回合异常：{type(e).__name__}: {e}', exc_info=True)
         engine.emit({'type': 'error', 'text': f'本轮异常：{type(e).__name__}: {e}'})
@@ -77,7 +81,7 @@ def _round_worker(text: str, move_info: dict):
         engine.emit({'type': 'round_done'})
 
 
-def _spawn_round(text: str, move_info: dict = None) -> bool:
+def _spawn_round(text: str) -> bool:
     """起一个回合线程。已有回合在跑则返回 False。"""
     with _state_lock:
         if _state['running']:
@@ -85,7 +89,7 @@ def _spawn_round(text: str, move_info: dict = None) -> bool:
         _state['running'] = True
 
     engine.emit({'type': 'round_queued', 'input': text})
-    t = threading.Thread(target=_round_worker, args=(text, move_info), daemon=True)
+    t = threading.Thread(target=_round_worker, args=(text,), daemon=True)
     _state['thread'] = t
     t.start()
     return True
@@ -122,9 +126,177 @@ def api_state():
     return jsonify(view)
 
 
+@app.route('/api/map')
+def api_map():
+    """
+    小地图的数据：几何（地块/路/范围）+ 当前所在。
+
+    **只读、不加锁**（同 `/api/locations`）。移动不走这里——点地图 = 下达**去向**，
+    走的是 `POST /api/input`（合成一句"我往X去"），因为去哪要由 L3 判、
+    落坐标由代码做（见 `地图实施计划.md` 阶段 1A）。
+    """
+    return jsonify(engine.map_view())
+
+
 @app.route('/api/locations')
 def api_locations():
+    """旧的地点树视图。地图上线后它只作为**没几何时的降级**保留。"""
     return jsonify(engine.location_tree())
+
+
+# ═══════════════════════════════════════════════════════════════
+# 世界编辑（阶段 2：改字段；阶段 3 再加几何）
+# ═══════════════════════════════════════════════════════════════
+
+@app.route('/api/map/edit')
+def api_map_edit():
+    """
+    编辑器的数据：`世界.map` 的**扁平实体模型**（地块 / 路 / 几何 / 全局）。
+
+    刻意与 `/api/map` 分开：那个是**画给玩家看的**（剥掉了 `产出` 这类概率字段，
+    见 `FRONTEND_HIDDEN_ATTRS`），这个是**给编辑器用的**，要原样。
+    合成的编辑器不能拿玩家视角的数据去回写——那会把剥掉的东西写没。
+    """
+    import io as _io
+    from common import map_io
+    from Schema.B1_worldState_sch import REGION_TYPES          # `类型` 里哪些值是地区
+    from common.base_cnf import BASE_PATH, WORLD_MAP_FILE
+    path = os.path.join(BASE_PATH, WORLD_MAP_FILE)
+    try:
+        with _io.open(path, encoding='utf-8') as f:
+            world = map_io.parse_world(f.read())
+    except FileNotFoundError:
+        return jsonify({'ok': False,
+                        'reason': f'找不到 {WORLD_MAP_FILE}——先跑 '
+                                  f'`python -m common.map_io --export --from-json`'})
+    except Exception as e:
+        return jsonify({'ok': False, 'reason': f'{type(e).__name__}: {e}'})
+    model = map_io.flatten_world(world)
+    # `view` 就是 `/api/map` 那个形状——编辑器左侧那张图直接复用 `buildMapStatic`，
+    # 于是"小地图"与"编辑器地图"真的是同一个组件，而不是长得像的两个。
+    #
+    # `regions`：**哪些节点是地区**，由 Python 一处算好告诉前端。
+    # 为什么要它：判据是 `类型` 里那几个词（`REGION_TYPES`），前端要标"这块是地区"
+    # 就得知道那张词表——**抄一份进 JS 就是两处真相**（改一处另一处悄悄漂），
+    # 所以只传结论、不传规则。
+    return jsonify({'ok': True, 'form': map_io.to_edit_form(model),
+                    'view': engine.map_view(),
+                    # `regions`：哪些节点**是**地区；`region_types`：**能填哪些值**。
+                    # 两个都由 Python 一处算好告诉前端——前端要标"这块是地区"、
+                    # 要给出一个可选值的下拉框，就得知道那张词表；**抄一份进 JS
+                    # 就是两处真相**（改一处另一处悄悄漂），所以只传结论、不传规则。
+                    'regions': [p['名'] for p in model['地块']
+                                if str((p.get('属性') or {}).get('类型') or '').strip()
+                                in REGION_TYPES],
+                    'region_types': sorted(REGION_TYPES),
+                    'path': WORLD_MAP_FILE,
+                    # `problems` 是**拦住保存**的东西；`notices` 只是提醒
+                    # （键写歪了、保留键写在没人读的地方）——两者分开回，
+                    # 不然界面会把"提醒"说得像"存不了"
+                    'problems': map_io.validate_edit(model),
+                    'notices': map_io.key_notices(model)})
+
+
+@app.route('/api/map/preview', methods=['POST'])
+def api_map_preview():
+    """
+    **只看不写**：把"手上这份表单要是保存，地图会变成什么样"算出来。
+
+    为什么非要有它：编辑器左侧那张图是**开编辑器时拍的一张快照**（`/api/map/edit`
+    只给那一次），而表单是活的。删掉一条路、删掉一个地块、改一个名字，快照都不知道
+    ——于是地图上留下一条**看得见却点不动、也删不掉**的幽灵线（用户报的正是这个）。
+
+    这里是照**保存那条流水线**（`map_io.prepare_edit`）重算一遍再画：
+    不校验（半成品也要能看）、不备份、不落盘、不碰运行中的世界。
+    于是"删一个地块连带删它的路"这类规则**只有 Python 那一份**，
+    前端不必在 JS 里抄一遍——抄的那份迟早漂开。
+
+    玩家标记仍取自**运行中的世界**：预览改的是地图长什么样，不是他现在在哪。
+    """
+    from common import map_io
+    from common.base_cnf import BASE_PATH, WORLD_MAP_FILE
+    from Schema.B1_worldState_sch import B1WorldLayer
+
+    body = request.get_json(silent=True) or {}
+    form = body.get('form')
+    if not isinstance(form, dict) or '地块' not in form:
+        return jsonify({'ok': False, 'reason': '请求里没有编辑表单'})
+
+    path = os.path.join(BASE_PATH, WORLD_MAP_FILE)
+    try:
+        edit, _problems = map_io.from_edit_form(form)
+        # 几何那几行**写坏了就不画**：`from_edit_form` 会把解析不出的那一条丢掉，
+        # 照丢掉的画出来就是"某块地凭空不见了"——比图旧一点难查得多。
+        # （字段行没写完之类不影响画图，那些不拦。）
+        _gi = form.get('几何') or {}
+        if any(len(_gi.get(k) or {}) != len(edit['几何'][k])
+               for k in ('坐标', '范围', '路径线')):
+            return jsonify({'ok': False,
+                            'reason': '坐标/范围/路径线有几行还没写完（写法认不出），'
+                                      '先把它们补齐——这一版画不出来'})
+        edit, _notes, renames = map_io.prepare_edit(edit, map_io.read_base(path),
+                                                    body.get('geo'))
+        w = B1WorldLayer(map_io.nest_world(edit))
+        st = engine.gc.player.player_dict.get('当前状态CurrentState') or {}
+        view = map_view_of(w, st, engine.gc.player_location)
+        # 画不出来（比如坐标全被写坏了）就别假装成功——前端宁可留着上一张图
+        if not view.get('ok'):
+            return jsonify({'ok': False, 'reason': view.get('reason') or '这一版画不出来'})
+        # `renames` 一起给出去：图按改名后的样子画了，表单里那串引用也得跟着改，
+        # 不然"图上叫新名字的路"在表单里对不上，点它就点不中。
+        return jsonify({'ok': True, 'view': view, 'renames': renames})
+    except Exception as e:
+        # 半成品的表单（键名重复、几何文案写到一半）会走到这里。
+        # **不猜**：如实告诉前端"这一版画不出来"，让它留着上一张图。
+        logger.error(f'预览失败：{type(e).__name__}: {e}', exc_info=True)
+        return jsonify({'ok': False, 'reason': f'{type(e).__name__}: {e}'})
+
+
+@app.route('/api/map/save', methods=['POST'])
+def api_map_save():
+    """
+    编辑器保存：**校验 → 备份 → 写盘 → 热重载**。
+
+    满轮在跑时**拒绝**（不是排队）：保存会把世界字典换掉，跑到一半的回合
+    读到一半新一半旧，比报错更难查。宁可让用户等一下再点。
+    """
+    import io as _io
+    from common import map_io
+    from common.base_cnf import BASE_PATH, WORLD_MAP_FILE
+
+    if _state['running']:
+        return jsonify({'ok': False, 'busy': True,
+                        'problems': ['上一轮还在跑，等它结束再保存']})
+
+    body = request.get_json(silent=True) or {}
+    form = body.get('form')
+    if not isinstance(form, dict) or '地块' not in form:
+        return jsonify({'ok': False, 'problems': ['请求里没有编辑表单']})
+
+    # 先把"文本值"解回模型（这一步就会挑出不合法写法），再走写盘三查
+    edit, problems = map_io.from_edit_form(form)
+    if problems:
+        return jsonify({'ok': False, 'stage': '取值', 'problems': problems})
+
+    # 拖出来的几何（阶段 3）：前端只报**数值**，文本由 `map_io` 生成——
+    # 免得在 JS 里抄一份 Python `repr(float)` 的格式化规则（两处真相，迟早漂）
+    path = os.path.join(BASE_PATH, WORLD_MAP_FILE)
+    r = map_io.save_map(path, edit, geo=body.get('geo'))
+    if not r.get('ok'):
+        return jsonify(r)
+
+    try:
+        r['reloaded'] = engine.gc.reload_world()
+    except Exception as e:
+        logger.error(f'保存后热重载失败：{type(e).__name__}: {e}', exc_info=True)
+        r['reloaded'] = None
+        r['problems'] = [f'文件已写入并备份，但**热重载失败**：{type(e).__name__}: {e}'
+                         f'——重启一次服务即可生效']
+    r['backup'] = os.path.basename(r.get('backup') or '') or None
+    # `cascade` 是"顺带改了什么"（含拖出来的几何跟端点走的那几条），
+    # 要原样给用户看，不能悄悄做。它由 `map_io.save_map` 一路带出来。
+    r['cascade'] = r.get('cascade') or []
+    return jsonify(r)
 
 
 @app.route('/api/npcs')
@@ -146,6 +318,19 @@ def api_context(which):
 @app.route('/api/saves')
 def api_saves():
     return jsonify({'saves': engine.list_saves()})
+
+
+@app.route('/api/saves/wait', methods=['POST'])
+def api_saves_wait():
+    """
+    等**后台的存档线程**落盘。
+
+    `/save` 是后台写的（`GameController._do_save` 起线程、立刻返回），所以
+    "存完立刻列一遍"会**看不到刚存的那个**——界面上就是"点了保存没反应"。
+    `_do_save` 的注释里写着同样的理由；`/load` 也在用同一个等待（同名存档还在写
+    就先等它）。这里只是把它开到网页上。
+    """
+    return jsonify({'ok': engine.gc.wait_for_saves(timeout=15)})
 
 
 @app.route('/api/history')
@@ -172,7 +357,6 @@ def api_input():
     | action       | 前端该做的                                     |
     |--------------|------------------------------------------------|
     | `started`    | 回合已在后台跑，等 SSE 的 `round_done`         |
-    | `need_move`  | 输入里有移动标记，弹地点选择器，再 POST `/api/move` |
     | `skip`/`empty` | 命令已处理，什么都不用做                     |
     | `break`      | 玩家要退出（网页上一般不理）                   |
     | `busy`       | 上一轮还没跑完                                 |
@@ -186,39 +370,15 @@ def api_input():
     action = act['action']
 
     if action == 'run':
-        if not _spawn_round(act['text'], act.get('move_info')):
+        if not _spawn_round(act['text']):
             return jsonify({'action': 'busy'})
         return jsonify({'action': 'started'})
-
-    if action == 'need_move':
-        # 移动目标交给前端选（网页是地点树，终端是 input() 菜单）
-        return jsonify({'action': 'need_move', 'raw': act['raw'],
-                        'marker': act['marker']})
 
     return jsonify({'action': action})
 
 
-@app.route('/api/move', methods=['POST'])
-def api_move():
-    """
-    `{'path': '苍云大陆·东域·青木山脉', 'raw': '(可选) 带 {移动} 的原文'}`
-
-    不带 `raw` 就是纯粹的地点树点击移动；带 `raw` 则把路径填回原文再跑，
-    这样「我去{移动}看看」里的前后文不会丢。
-    """
-    data = request.get_json(silent=True) or {}
-    path = (data.get('path') or '').strip()
-    raw = (data.get('raw') or '').strip()
-    if not path:
-        return jsonify({'ok': False, 'error': '缺少 path'}), 400
-
-    text, move_info = engine.resolve_move(raw or '/move', path)
-    if text is None:
-        return jsonify({'ok': False, 'error': '路径为空'}), 400
-
-    if not _spawn_round(text, move_info):
-        return jsonify({'ok': False, 'error': 'busy'}), 409
-    return jsonify({'ok': True, 'text': text, 'move': move_info})
+# `/api/move` 已退役（2026-10-08）：地图是主输入，移动走"点地图 → 下达去向"，
+# 位置由 L3 的 `去向` + 代码落坐标（见 地图实施计划.md 阶段 1A / 1B）。
 
 
 @app.route('/api/command', methods=['POST'])

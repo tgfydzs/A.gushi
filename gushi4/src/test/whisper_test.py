@@ -25,7 +25,7 @@ L1 是不确定的。同一个"耳边低语"输入，实测一次给 `private`�
 本探针把每次的 scope 和 `感知分发` 的名单都打出来，供人工核对。
 
 跑法：
-    cd E:/A.gushi/gushi4 && python src/test/whisper_test.py [次数，默认 5]
+    cd <项目根> && python src/test/whisper_test.py [次数，默认 5]
 """
 
 import collections

@@ -1,0 +1,130 @@
+flowchart TB
+    subgraph 主入口["主循环 src/test/N2_contextRetrieval.py"]
+        direction TB
+        MAIN["while True"] --> N0a["N0_消费后台产出()<br/>gc.consume_deferred(n9_director)"]
+        N0a --> N0b["N0_显示场景()<br/>地点·NPC·时间"]
+        N0b --> N1["N1_读输入()<br/>命令(/save /load /npcs) / 撤回 / 移动"]
+        N1 --> N1A{"命令?"}
+        N1A -- "break" --> END["结束"]
+        N1A -- "continue" --> N0a
+        N1A -- "None(空行)" --> N0a
+        N1A -- player_input --> N2["N2_事件判断(player_input)<br/>event_judge.judge()"]
+        N2 --> N3["N3_感知分发()<br/>info_filter.judge_for_npc()"]
+        N3 --> N4N5N6["N4N5N6_并行(n3_result)<br/>ThreadPoolExecutor per NPC"]
+        N4N5N6 --> N7N8["N7N8_并行(...)<br/>ThreadPoolExecutor x2"]
+        N7N8 --> MOV["N8后_处理移动()<br/>移动落盘"]
+        MOV --> ACT["玩家自主行动()<br/>n6_update.process_player_action()"]
+        ACT --> HB["heartbeat.try_trigger()"]
+        HB --> CLK["打印 ⏰ 游戏时间"]
+        CLK --> N0a
+    end
+
+    subgraph N4N6PIPE["N4→N5→N6 内含管线 / per NPC"]
+        direction TB
+        N4["N4: N4_Reasoning.reason_for_npc()<br/>更新待解释事件表"]
+        N4 --> N5["N5: N5_Response.response_say()<br/>回应+内心想法<br/>⛔ 不接受玩家实例"]
+        N5 --> N6["N6: N6_Update.update_for_npc()<br/>增量delta+旁白<br/>✅ 唯一接玩家实例"]
+    end
+
+    subgraph N7N8SUB["N7+N8 并行"]
+        direction TB
+        N7["N7: N7_Propagation.propagate()<br/>纯规则·零LLM<br/>地段传播扩散为传闻"]
+        N8["N8: N8_Time.process()<br/>LLM估算对话耗时<br/>+ 规则计算移动耗时"]
+    end
+
+    subgraph N9SUB["N9 导演层 三路并行"]
+        direction TB
+        N9a["N9a: run_rules()<br/>temp=0.3<br/>世界规则触发判定"]
+        N9b["N9b: run_narration()<br/>temp=0.9<br/>0-1条环境旁白"]
+        N9c["N9c: run_behavior()<br/>temp=0.6<br/>NPC幕后行为+剧情传播"]
+    end
+
+    N4N5N6 --> N4N6PIPE
+    N7N8 --> N7N8SUB
+
+    subgraph GameController["GameController / 状态管理中心"]
+        GC["GameController"] --> GC_METHODS["方法"]
+        GC_METHODS --- init_world["init_world()<br/>→ 加载 B1WorldLayer"]
+        GC_METHODS --- init_clock["init_clock()<br/>→ 加载 GameClock + ContextHistory x3"]
+        GC_METHODS --- init_all_npcs["init_all_npcs()<br/>→ 加载 B3NPCListLayer"]
+        GC_METHODS --- init_player["init_player()<br/>→ 加载 B4PlayerLayer"]
+        GC_METHODS --- handle_command["handle_command(raw)<br/>→ /save /load /npcs /player /context"]
+        GC_METHODS --- consume_deferred["consume_deferred(n9_director)<br/>→ N9产出消费"]
+        GC_METHODS --- process_npc_pipeline["process_npc_pipeline(name,npc,...)<br/>→ N4→N5→N6 串行调用"]
+        GC_METHODS --- sync_npc_to_lists["sync_npc_to_lists(npc)<br/>→ 同步NPC回列表"]
+        GC_METHODS --- snapshot["snapshot() / restore()<br/>→ 全量快照/回滚"]
+    end
+
+    subgraph Heartbeat["HeartbeatManager / 后台心跳"]
+        HB_MGR["HeartbeatManager"] --> HB_METHODS["方法"]
+        HB_METHODS --- try_trigger["try_trigger(..., game_clock, world_layer)<br/>→ 每12游戏时触发一人"]
+        HB_METHODS --- enqueue["enqueue()<br/>→ N9a/N9b/N9c 入 DeferredQueue"]
+        HB_METHODS --- consume["consume()<br/>→ 流程消费产出"]
+    end
+
+    subgraph Schema["数据模型/Schema 层"]
+        B1["B1WorldLayer<br/>世界规则·地点树<br/>get_config()<br/>location_distance()<br/>parse_path()<br/>find_npcs_at_location()<br/>navigate_interactive()"]
+        B3NPC["B3NPCLayer<br/>单NPC 10张表:
+记忆·信念·性格·目标
+好感·状态·观察·持有物
+待解释事件·更新成本
+<br/>to_dict() 全量序列化"]
+        B3LIST["B3NPCListLayer<br/>NPC集合管理
+get_npc() 子串匹配
+add() / delete() / clear()"]
+        B4["B4PlayerLayer<br/>玩家数据包装
+player_dict 字典"
+        ]
+        CTX["ContextHistory
+对话历史管理
+格式: 轮次|时间|发言人:内容
+new_context() / add_context()
+三条: global / event / director"]
+    end
+
+    subgraph LLM["LLM 调用层"]
+        CLI["LLMClient<br/>无状态
+chat(system,user)→str
+chat_by_context(list)→str
+<br/>重试: 429/5xx 退避3次"]
+    end
+
+    subgraph Utils["工具层 common/"]
+        ST["small_tool.py
+safe_json_loads() / load_prompt()
+resolve_npc_name()
+apply_npc_delta() / apply_player_delta()
+merge_delta() / strip_empty_delta()
+resolve_move_markers()"]
+        CLK["GameClock<br/>游戏时间(24h/时辰制)
+advance(minutes)
+now_str()"]
+        LOG["log.py<br/>日志引擎 单例
+按session分文件"]
+    end
+
+    %% 连接关系
+    N4 -- "LLM调用" --> CLI
+    N5 -- "LLM调用" --> CLI
+    N6 -- "LLM调用" --> CLI
+    N8 -- "LLM调用" --> CLI
+    N9a -- "LLM调用" --> CLI
+    N9b -- "LLM调用" --> CLI
+    N9c -- "LLM调用" --> CLI
+
+    GC -- "持有" --> B1
+    GC -- "持有" --> B3LIST
+    GC -- "持有" --> B4
+    GC -- "持有" --> CTX
+    GC -- "持有" --> CLK
+
+    HB_MGR -- "N9产出" --> N9SUB
+    HB_MGR -- "DeferredQueue" --> GC
+    N4N6PIPE -- "process_npc_pipeline" --> GC
+
+    style MAIN fill:#1a1a2e,color:#fff,stroke:#e94560
+    style GC fill:#16213e,color:#fff,stroke:#0f3460
+    style CLI fill:#533483,color:#fff,stroke:#e94560
+    style N4N6PIPE fill:#2d6a4f,color:#fff,stroke:#52b788
+    style N7N8SUB fill:#5a189a,color:#fff,stroke:#9d4edd
+    style N9SUB fill:#7b2cbf,color:#fff,stroke:#c77dff

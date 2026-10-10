@@ -21,12 +21,11 @@ gushi4 主流程（**终端前端**）
 
 ⚠️ 跳数是**假设**不是结论——按设计方案 §八，阶段 2 才用实验定 L1 要不要拆。
 
-`{移动}` 走**终端专用**的交互式地点菜单（`resolve_move_markers` → `navigate_interactive`，
-会阻塞在 `input()` 上）；网页走地点树的点击。引擎自己从不读输入。
+移动：手打"我往青木山脉去"即可（自由文本，由 L3 判去向）；网页走地图点击。
+`{移动}` / `/move` 与那个终端菜单**已退役**——见 `地图实施计划.md` 阶段 1A。
 """
 
 from common.engine import GameEngine, terminal_renderer
-from common.small_tool import resolve_move_markers
 
 
 def main():
@@ -56,16 +55,7 @@ def main():
         if action in ('empty', 'skip'):
             continue
 
-        if action == 'need_move':
-            # 终端走交互式菜单；玩家取消（返回 None）则跳过本轮
-            text, move_info = resolve_move_markers(
-                raw, engine.gc.b1WorldLayer, engine.gc.player)
-            if text is None:
-                continue
-        else:
-            text, move_info = act['text'], act.get('move_info')
-
-        engine.run_round(text, move_info)
+        engine.run_round(act['text'])
 
     # 存档在后台线程写盘，而线程是 daemon 的——**进程一退，没写完的存档就没了**。
     # `/save` 之后紧接着 `exit` 会踩到这条。close() 里兜底等它落盘。

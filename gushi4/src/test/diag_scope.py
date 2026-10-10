@@ -5,7 +5,7 @@
 "scope 从来不是 private"到底是模型没判、还是判了被后续代码吞了。
 
 跑法：
-    cd E:/A.gushi/gushi4 && python src/test/diag_scope.py
+    cd <项目根> && python src/test/diag_scope.py
 """
 
 import json

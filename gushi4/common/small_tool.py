@@ -393,92 +393,17 @@ def walk_category_files(root_folder: str):
 
 
 
-# 移动标记的模式定义——**只此一处**。
-# 原先这两条正则内联在 resolve_move_markers 里，抽出后引擎才能只"检测"不"导航"。
-_MOVE_PLACEHOLDER_RE = re.compile(r'\{(移动|move)\}', re.IGNORECASE)
-_MOVE_COMMAND_RE = re.compile(r'^/move\s*(.*)', re.IGNORECASE)
-
-
-def find_move_marker(raw_input: str):
-    """
-    **只检测**移动标记，不触发任何导航。
-
-    引擎必须能问"这条输入里有移动标记吗"而**不弹交互菜单**——终端要在 `input()`
-    里选（`navigate_interactive`），网页要在地点树里点。引擎不该知道是哪种，
-    所以这里只负责识别，选择权交回调用方。
-
-    :return: {'kind': 'placeholder'|'command', 'start': int, 'end': int, 'suffix': str}
-             没有标记时返回 None
-    """
-    m = _MOVE_PLACEHOLDER_RE.search(raw_input or '')
-    if m:
-        return {'kind': 'placeholder', 'start': m.start(), 'end': m.end(), 'suffix': ''}
-    m = _MOVE_COMMAND_RE.match(raw_input or '')
-    if m:
-        return {'kind': 'command', 'start': 0, 'end': m.end(),
-                'suffix': m.group(1).strip()}
-    return None
-
-
-def apply_move_target(raw_input: str, marker: dict, selected_path: str, player=None):
-    """
-    把选中的目标位置填回输入。
-
-    两种标记的填法**本来就不同**（这是原始行为，不是新加的）：
-
-    | 标记              | 填法                                  |
-    |-------------------|---------------------------------------|
-    | `{移动}` 占位符   | 原地替换标记本身，前后文保留          |
-    | `/move [后续]`    | 整条重写成 `前往<路径>，<后续>`       |
-
-    :return: (完整输入, {'from': str, 'to': str})
-    """
-    from_loc = ''
-    if player is not None:
-        from_loc = player.player_dict.get('当前状态CurrentState', {}).get('当前所处位置', '')
-
-    if marker['kind'] == 'placeholder':
-        text = raw_input[:marker['start']] + selected_path + raw_input[marker['end']:]
-    else:
-        suffix = marker.get('suffix', '')
-        text = f'前往{selected_path}，{suffix}' if suffix else f'前往{selected_path}'
-
-    return text, {'from': from_loc, 'to': selected_path}
-
-
-def resolve_move_markers(raw_input: str, world_layer: B1WorldLayer, player=None):
-    """
-    扫描玩家输入中的移动标记，触发**终端交互式**位置导航。
-
-    触发标记（不区分大小写）：
-      - {移动} 或 {move}      → 占位符替换
-      - /move                 → 独立移动命令
-      - /move 后续内容         → 移动 + 后续行动
-
-    处理逻辑：
-      1. 检测原始输入是否包含触发标记
-      2. 若触发 → 调用 world_layer.navigate_interactive()
-      3. 若导航取消 → 返回 (None, None)
-      4. 若导航完成 → 将选中路径替换到标记位置，不询问移动方式
-
-    ⚠️ 这是**终端专用**的路径（会阻塞在 `input()` 上）。网页走
-    `find_move_marker` + `apply_move_target` 两步，不碰这里。
-
-    :param raw_input: 玩家原始输入
-    :param world_layer: B1WorldLayer 实例
-    :param player: B4PlayerLayer 玩家实例（取当前位置作为出发地）
-    :return: (替换后的完整输入, 移动信息dict)；取消时返回 (None, None)
-             移动信息格式：{"from": str, "to": str}
-    """
-    marker = find_move_marker(raw_input)
-    if marker is None:
-        return (raw_input, None)
-
-    print('\n--- 选择目标位置 ---')
-    selected = world_layer.navigate_interactive()
-    if selected is None:
-        return (None, None)
-    return apply_move_target(raw_input, marker, selected, player)
+# ── 移动标记：已退役（2026-10-08）─────────────────────────────────────────
+#
+# 这里原本有 `find_move_marker` / `apply_move_target` / `resolve_move_markers`，
+# 配套 `{移动}` 占位符与 `/move` 命令。它们存在的唯一理由是
+# **让前端给引擎一个"树上的合法路径"**（`move_info`），好让引擎自己把位置写下去。
+#
+# 位置改由 **L3 出 `去向`（地名）+ 代码落坐标**之后，这个理由没有了：
+#   - 地图是主输入（点地图 = 下达去向）
+#   - 手打"我往青木山脉去"本来就是自由文本，直接当普通一轮交给 L3 即可
+#   - 终端版**一点能力都没损失**（照样打字移动）
+# 顺带少了一处**绕过唯一客观写入口**的地方（引擎里那段直接用 move_info 写位置的兜底）。
 
 
 def load_npc_list_from_json(file_path: str) -> B3NPCListLayer:

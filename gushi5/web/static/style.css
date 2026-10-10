@@ -1,0 +1,657 @@
+/* gushi5 · 样式（从 gushi4 搬来）—— 深色水墨调。修仙题材，克制为主：正文可读性优先，颜色只用来分层级。 */
+
+:root {
+  --bg:        #101219;
+  --surface:   #171a23;
+  --surface2:  #1e2230;
+  --line:      #272c3a;
+  --line-soft: #1f2330;
+
+  --text:      #d9d5cd;   /* 暖白，长时间阅读不刺眼 */
+  --text-dim:  #8e94a6;
+  --text-mute: #5d6474;
+
+  --gold:      #c9a961;   /* 修为 / 强调 */
+  --jade:      #6ba89a;   /* 旁白 */
+  --blood:     #b5573f;   /* 生命 */
+  --spirit:    #5b86b5;   /* 灵力 */
+  --warn:      #c98a5b;
+
+  --r: 6px;
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  --cjk: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%; margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--cjk);
+  font-size: 14px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+body { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
+
+/* ══════════ 顶栏 ══════════ */
+
+#topbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 9px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.brand {
+  font-weight: 700; letter-spacing: .5px; color: var(--gold);
+  font-size: 15px;
+}
+.brand span { color: var(--text-mute); font-weight: 400; }
+
+.headline { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.hname { color: var(--text); font-weight: 600; }
+.hloc {
+  color: var(--text-dim); cursor: pointer; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 42vw;
+}
+.hloc:hover { color: var(--jade); }
+.sep { color: var(--text-mute); }
+
+.spacer { flex: 1; }
+
+.clock, .round {
+  font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+  white-space: nowrap;
+}
+.round { color: var(--text-mute); }
+
+.actions { display: flex; gap: 6px; }
+
+.btn {
+  background: var(--surface2); color: var(--text-dim);
+  border: 1px solid var(--line); border-radius: var(--r);
+  padding: 5px 11px; cursor: pointer; font-family: inherit; font-size: 12.5px;
+  transition: all .12s;
+}
+.btn:hover { color: var(--text); border-color: #39405420; background: #262b3a; }
+.btn:active { transform: translateY(1px); }
+.btn.on { color: var(--gold); border-color: var(--gold); }
+.btn-sm { padding: 3px 8px; font-size: 12px; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ══════════ 面板抽屉 ══════════ */
+
+.drawer {
+  position: fixed; top: 52px; right: 16px; z-index: 40;
+  width: 320px; max-height: 70vh; overflow: auto;
+  background: var(--surface2);
+  border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 12px 40px #0009;
+}
+.drawer-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; background: var(--surface2);
+}
+.drawer-head .hint { color: var(--text-mute); font-size: 11.5px; flex: 1; }
+.drawer-list { padding: 6px; }
+
+.pitem {
+  display: flex; align-items: center; gap: 9px;
+  padding: 6px 8px; border-radius: 4px; cursor: pointer;
+}
+.pitem:hover { background: #ffffff08; }
+.pitem input { accent-color: var(--gold); cursor: pointer; }
+.pitem .pt { flex: 1; }
+.pitem .pz { font-size: 11px; color: var(--text-mute); font-family: var(--mono); }
+
+/* ══════════ 三栏 ══════════ */
+
+/*
+ * 右栏宽度是**可拖的**（`--rail-r`，默认 400px）。原来 322px 对地图太窄：
+ * 41 个地块塞在 298px 里，名字必然叠。拖宽对右栏所有面板都有用，不只是地图。
+ */
+#layout {
+  display: grid;
+  grid-template-columns: 292px minmax(0, 1fr) var(--rail-r, 400px);
+  gap: 1px;
+  background: var(--line-soft);
+  min-height: 0;
+}
+
+/* 拖拽条贴在右栏的**左边界**上：7px 是因为 1px 根本点不中 */
+#railRight { position: relative; }
+#railGrip { position: absolute; left: -4px; top: 0; bottom: 0; width: 9px;
+            cursor: col-resize; z-index: 5; }
+#railGrip:hover, #railGrip.on { background: #c9a96140; }
+
+.rail {
+  background: var(--bg);
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+  min-height: 0;
+}
+#railLeft:empty, #railRight:empty { background: var(--bg); }
+
+#center {
+  background: var(--bg);
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0; min-width: 0;
+}
+
+/*
+ * ⚠️ 必须显式指定 grid-row。
+ *
+ * `#progress` 隐藏时是 `display:none`，它会**退出网格**——自动排列于是把
+ * `#stream` 顶到第 1 行（auto）、`#composer` 落到第 2 行（1fr），
+ * 输入框被撑满大半屏。显式行号后，谁隐藏都不影响别人。
+ */
+#progress { grid-row: 1; }
+#stream   { grid-row: 2; }
+#composer { grid-row: 3; }
+
+@media (max-width: 1180px) {
+  #layout { grid-template-columns: 260px minmax(0,1fr); }
+  #railRight { display: none; }
+}
+@media (max-width: 820px) {
+  #layout { grid-template-columns: minmax(0,1fr); }
+  #railLeft { display: none; }
+}
+
+/* ══════════ 面板 ══════════ */
+
+.panel { border-bottom: 1px solid var(--line-soft); }
+.panel-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px 6px;
+  font-size: 11.5px; letter-spacing: 1px;
+  color: var(--text-mute); text-transform: uppercase;
+}
+.panel-head .exp {
+  margin-left: auto; cursor: pointer; color: var(--text-mute);
+  font-size: 11px; user-select: none;
+}
+.panel-head .exp:hover { color: var(--text-dim); }
+.panel-body { padding: 0 12px 12px; }
+.panel.collapsed .panel-body { display: none; }
+
+/* ══════════ 键值行 ══════════ */
+
+.kv { display: flex; gap: 8px; padding: 2px 0; align-items: baseline; }
+.kv .k { color: var(--text-mute); font-size: 12px; min-width: 44px; flex-shrink: 0; }
+.kv .v { flex: 1; word-break: break-word; }
+.kv .v.gold { color: var(--gold); }
+.kv .v.jade { color: var(--jade); }
+.v.empty, .muted { color: var(--text-mute); font-size: 12.5px; }
+
+/* ══════════ 数值条 ══════════ */
+
+.bar { margin: 5px 0; }
+.bar-top {
+  display: flex; justify-content: space-between;
+  font-size: 12px; margin-bottom: 3px;
+}
+.bar-top .bn { color: var(--text-mute); }
+.bar-top .bv { font-family: var(--mono); font-size: 11.5px; }
+.bar-track {
+  height: 5px; background: #ffffff0f; border-radius: 3px; overflow: hidden;
+}
+.bar-fill { height: 100%; border-radius: 3px; transition: width .35s ease; }
+.bar-fill.hp { background: linear-gradient(90deg,#8d3f2c,var(--blood)); }
+.bar-fill.mp { background: linear-gradient(90deg,#3d5f85,var(--spirit)); }
+
+/* ══════════ 持有物 ══════════ */
+
+.inv-item { padding: 5px 0; border-bottom: 1px dashed var(--line-soft); }
+.inv-item:last-child { border-bottom: 0; }
+.inv-name { color: var(--text); font-size: 13px; }
+.inv-desc { color: var(--text-mute); font-size: 12px; line-height: 1.5; }
+
+/* ══════════ NPC ══════════ */
+
+.npc {
+  padding: 6px 8px; border-radius: 4px; cursor: pointer;
+  border: 1px solid transparent;
+}
+.npc:hover { background: #ffffff07; border-color: var(--line); }
+.npc.sel { background: #c9a96112; border-color: #c9a96155; }
+.npc.here { border-left: 2px solid var(--jade); }
+.npc-top { display: flex; align-items: baseline; gap: 6px; }
+.npc-name { font-size: 13px; color: var(--text); flex: 1; }
+.npc-star { color: var(--gold); font-size: 11px; }
+.npc-sub {
+  font-size: 11.5px; color: var(--text-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ══════════ 地点树 ══════════ */
+
+.tree { font-size: 13px; }
+.tnode { user-select: none; }
+.trow {
+  display: flex; align-items: center; gap: 5px;
+  padding: 2.5px 4px; border-radius: 4px; cursor: pointer;
+}
+.trow:hover { background: #ffffff08; }
+.trow.cur { background: #6ba89a1f; color: var(--jade); }
+.trow.cur .tname::after { content: " ◂在此"; font-size: 10px; color: var(--jade); opacity: .8; }
+.tw { width: 12px; text-align: center; color: var(--text-mute); font-size: 10px; flex-shrink: 0; }
+.tname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tleaf { color: var(--text-mute); font-size: 9px; }
+.tkids { margin-left: 12px; border-left: 1px solid var(--line-soft); padding-left: 4px; }
+.tkids.hidden { display: none; }
+.tdesc {
+  font-size: 11.5px; color: var(--text-mute); line-height: 1.5;
+  padding: 1px 0 5px 21px; font-style: italic;
+}
+/* 当前地点的属性标签（灵气/危险/势力/功能…）。与 .tdesc 同样只在当前行出现 */
+.tattrs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 0 6px 21px; }
+.tattr {
+  font-size: 10.5px; line-height: 1.6;
+  padding: 0 6px; border-radius: 3px;
+  background: #ffffff0a; border: 1px solid var(--line-soft);
+  color: var(--text-mute);
+}
+.tattr i { font-style: normal; opacity: .6; margin-right: 3px; }
+
+/* ══════════ 叙事流 ══════════ */
+
+.stream {
+  overflow-y: auto; padding: 20px 28px 8px;
+  min-height: 0; scroll-behavior: smooth;
+}
+
+/* 行宽上限：中心栏在宽屏上能到 1200px+，正文铺满的话一行 80+ 字没法读。
+   62em 差不多是中文 45~55 字/行，接近书籍的舒适区。 */
+.entry, .stream-empty {
+  max-width: 62em; margin-left: auto; margin-right: auto;
+}
+
+.entry { margin-bottom: 14px; animation: fade .25s ease; }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+
+.e-player {
+  color: var(--text); padding: 7px 12px;
+  background: #ffffff07; border-left: 2px solid var(--text-mute);
+  border-radius: 0 4px 4px 0;
+}
+.e-player .who { color: var(--text-mute); font-size: 12px; margin-right: 6px; }
+
+.e-dialog { padding-left: 2px; }
+.e-dialog .who { color: var(--gold); font-weight: 600; margin-right: 7px; }
+
+.e-narr {
+  color: var(--jade); font-style: italic; opacity: .82;
+  padding-left: 14px; border-left: 2px solid #6ba89a33;
+}
+
+.e-dim { color: var(--text-mute); font-size: 12.5px; }
+.e-info { color: var(--text-dim); font-size: 13px; white-space: pre-wrap; }
+.e-err { color: var(--warn); font-size: 13px; }
+
+.e-scene {
+  margin: 20px 0 14px; padding: 10px 0;
+  border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft);
+  color: var(--text-dim); font-size: 13px;
+}
+.e-scene .loc { color: var(--gold); }
+.e-time {
+  text-align: center; color: var(--text-mute); font-size: 12px;
+  font-family: var(--mono); margin: 18px 0;
+}
+.e-time::before, .e-time::after { content: " ── "; opacity: .4; }
+
+.stream-empty {
+  color: var(--text-mute); text-align: center; margin-top: 22vh;
+  font-size: 13px; line-height: 2;
+}
+
+/* ══════════ 阶段进度 ══════════ */
+
+.progress {
+  border-bottom: 1px solid var(--line-soft);
+  padding: 9px 28px 10px; background: var(--surface);
+}
+.prog-row { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+#progName { color: var(--text); }
+.prog-secs { font-family: var(--mono); font-size: 12px; color: var(--gold); }
+.prog-detail { color: var(--text-mute); font-size: 12px; }
+
+.spinner {
+  width: 12px; height: 12px; flex-shrink: 0;
+  border: 1.8px solid #ffffff22; border-top-color: var(--gold);
+  border-radius: 50%; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.prog-steps {
+  display: flex; gap: 14px; margin-top: 7px; flex-wrap: wrap;
+  font-size: 11.5px; font-family: var(--mono);
+}
+.step { color: var(--text-mute); }
+.step.done { color: #6ba89a99; }
+.step .s-sec { opacity: .7; }
+
+/* ══════════ 输入 ══════════ */
+
+.composer {
+  display: flex; gap: 8px; padding: 12px 28px 16px;
+  border-top: 1px solid var(--line-soft); background: var(--bg);
+}
+#input {
+  flex: 1; resize: none; background: var(--surface); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--r);
+  padding: 9px 12px; font-family: inherit; font-size: 14px; line-height: 1.5;
+}
+#input:focus { outline: none; border-color: #c9a96155; }
+#input::placeholder { color: var(--text-mute); }
+.btn-send { align-self: stretch; padding: 0 20px; color: var(--gold); border-color: #c9a96144; }
+.btn-send:hover:not(:disabled) { background: #c9a9611a; }
+
+/* ══════════ 浮层 ══════════ */
+
+.modal {
+  position: fixed; inset: 0; z-index: 60;
+  background: #0009; display: flex; align-items: center; justify-content: center;
+}
+.modal-box {
+  width: min(620px, 90vw); max-height: 78vh;
+  background: var(--surface2); border: 1px solid var(--line);
+  border-radius: 8px; display: flex; flex-direction: column;
+  box-shadow: 0 20px 60px #000b;
+}
+.modal-head {
+  display: flex; align-items: center; padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.modal-head strong { flex: 1; }
+.modal-tools { padding: 10px 14px 0; }
+.modal-tools input {
+  width: 100%; background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--r);
+  padding: 7px 10px; font-family: inherit; font-size: 13px;
+}
+.modal-tools input:focus { outline: none; border-color: #c9a96155; }
+.modal-body { padding: 10px 14px 16px; overflow-y: auto; }
+
+/* ══════════ 杂项 ══════════ */
+
+.hidden { display: none !important; }
+
+.ctx-line {
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.75;
+  color: var(--text-dim); padding: 2px 0;
+  border-bottom: 1px solid #ffffff06; word-break: break-word;
+}
+.ctx-line:last-child { border-bottom: 0; }
+
+
+.tag {
+  display: inline-block; font-size: 11px; padding: 1px 6px;
+  border-radius: 3px; background: #ffffff0d; color: var(--text-dim);
+  font-family: var(--mono);
+}
+.tag.warn { color: var(--warn); background: #c98a5b1a; }
+.tag.ok { color: var(--jade); background: #6ba89a1a; }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #ffffff14; border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #ffffff24; }
+
+
+/* ══════════ 小地图（阶段 1B）══════════
+   几何的"单位"是 .map 里的坐标（画布 ±570 左右），靠 viewBox 缩放到面板宽度。
+   所以这里的 r / font-size 是**用户单位**，看着大，渲染出来是小的。 */
+.mapbox { position: relative; }
+.minimap { width: 100%; height: auto; display: block; background: #0d1317;
+           border: 1px solid #1d2a31; border-radius: 6px;
+           touch-action: none; }               /* 拖动平移要不被浏览器手势抢走 */
+.mapbox.grabbing .minimap { cursor: grabbing; }
+.mapbox .minimap { cursor: grab; }
+/* 地图上的一切都**不给选中**：拖地块/拖曲线时，浏览器会顺手把标签里的字选成蓝底，
+   接着再拖就变成"拖动这段选中的文字"——Chrome 把它当搜索/拖放，手势当场丢掉。
+   图是图，不是正文。`-webkit-user-drag` 是那半句的兜底（阻止"拖文字"本身）。 */
+[data-mapbox] { user-select: none; -webkit-user-select: none; }
+[data-mapbox] text, [data-mapbox] circle, [data-mapbox] path, [data-mapbox] g {
+  -webkit-user-drag: none; user-select: none; -webkit-user-select: none; }
+/* 区域虚线圈：**只给眼睛看**，不接受点击（点它什么也不会发生，还会挡住底下的地块）。
+   区域本身靠它自己的名字/热区来选（`mapPickPlace` 按距离判）。 */
+.mreg { fill: none; stroke: rgba(120,170,190,.16); stroke-dasharray: 6 6; stroke-width: 3;
+        pointer-events: none; }
+.mroad { fill: none; stroke: rgba(150,190,210,.30); stroke-width: 4; stroke-linecap: round; }
+/* 地点的"盘"＝它的 `范围`（2026-10-10 起点大小即范围，不再是那个 6/9 的小点）。
+   盘可以很大（天道宗 r=104），所以**填充放得很淡、给一条亮边**——一坨半透明实心色块
+   是很丑的，而"盘有多大"这件事靠**边**就看得清。
+   `non-scaling-stroke`：不管缩放到多少，边始终 1.5 屏幕像素（否则放大后边跟着变粗）。 */
+.mplace .mdot { fill: #7fd1c0; fill-opacity: .16;
+                stroke: #7fd1c0; stroke-opacity: .5; stroke-width: 1.5;
+                vector-effect: non-scaling-stroke; }
+.mplace.leaf .mdot { fill: #a9bcc4; fill-opacity: .14; stroke: #a9bcc4; stroke-opacity: .45; }
+.mplace:hover .mdot { fill-opacity: .3; stroke-opacity: .95; }
+.mplace .mhit { fill: transparent; cursor: pointer; }
+/* 描边当"光晕"用：41 个名字挤在一起时（天道宗那一片 7 个地块挨着），
+   没有光晕就是一团糊字。paint-order 让描边画在填充**底下**，字还是字。 */
+/* ⚠️ 字号/光晕用 JS 挂上来的变量（`--mlabel` / `--mhalo`），值随缩放变化，
+   目的只有一个：**屏幕上恒定像素**。写成固定的画布单位（曾经的 34px）会让
+   文字和几何一起放大 —— 重叠跟缩放无关，放大再多次也分不开。
+   ⚠️ 名字在**单独一层**（`.lyr-label`），**不是** `.mplace` 的子元素 —— 这样它
+   才排得到所有节点之上（见 `buildMapStatic` 的涂层顺序）。
+   **不再 `pointer-events: none`**：点名字＝点那个地点（`data-place` 认得出是谁）。
+   原来那个 `none` 是为了让 📍 标记能点穿，那是 `.mme` 自己的事，不归名字管。 */
+.mlabel { fill: #9fb3bd; font-size: var(--mlabel, 34px); text-anchor: middle;
+          cursor: pointer;
+          paint-order: stroke; stroke: #0d1317; stroke-width: var(--mhalo, 9px);
+          stroke-linejoin: round; }
+.mlabel:hover { fill: #d7e6ea; }
+/* ⚠️ **📍 标记必须能被点穿**：它压在玩家所在地（往往是某个地块）上，
+   不设 `pointer-events: none` 的话它就是那一小块**最上面的元素**——
+   实测 4 个地块点不中（`closest('[data-place]')` 拿到的是标记里的 `<text>`，
+   于是"点了没反应"，而玩家以为是自己点歪了）。标记是**只读信息**，不接手势。 */
+.mme { pointer-events: none; }
+.mme circle { fill: #ffd479; }
+.mme .mpulse { fill: none; stroke: #ffd479; stroke-width: 3; opacity: .45; }
+.mme text { fill: #ffd479; font-size: var(--mlabel, 30px); text-anchor: middle;
+            paint-order: stroke; stroke: #0d1317; stroke-width: var(--mhalo, 9px); }
+/* 选中 / 一跳邻居：**染节点与路自己那条**，既不再另套一个圈，也不再另叠一条线。
+   为什么染而不是叠：
+     · 节点：它的"盘"＝它的 `范围`（`.mplace .mdot` 的 stroke），`范围` 一大
+       （星辰阁 102、天道宗 101），在 `r+8` 处再套一圈就跟自己的边几乎重合——
+       看着是同一圈描了两遍（用户实测报的）。地区更直接：那条虚线圈就是它自己。
+     · 路：原来是在 `.mdyn` 里叠（`.mconn-road` / `.ed-sel-road`），而 `.mdyn`
+       整层在 `.mstatic` **之上** → 高亮的路会盖住**文字**，跟"线段在底、
+       节点在中、文字在最上"的涂层顺序自相矛盾。染线之后它留在线段层里，
+       谁压谁自动跟涂层顺序走。
+   类由 `applyMapFocus` 挂：`sel` = 选中的那一个、`nb` = 一跳邻居。
+   金＝你选的这一个，青＝跟它连着的那些。
+   ⚠️ 这几条必须写在 `.mplace.leaf .mdot` / `.mplace:hover .mdot` **之后**——
+   同特异度，靠源码顺序定胜负。 */
+.mplace.sel .mdot { stroke: var(--gold); stroke-width: 3; stroke-opacity: 1; }
+.mplace.nb  .mdot { stroke: var(--jade); stroke-width: 2.5; stroke-opacity: .9; }
+.mreg.sel { stroke: var(--gold); stroke-width: 3; }
+.mreg.nb  { stroke: var(--jade); stroke-width: 3; }
+.mroad.sel { stroke: var(--gold); stroke-width: 4.5; }
+.mroad.nb  { stroke: var(--jade); stroke-width: 5; }
+/* 置灰：把**跟它没关系的**压暗，让"节点-线-节点"那一小片自己浮出来。
+   `applyMapFocus` 负责挂/摘 `has-sel` 与逐元素的 `on` / `sel` / `nb`；这里只管画。
+   ⚠️ 别把 `.mme` 写进来——那是玩家所在。 */
+.mreg, .mroad, .mplace { transition: opacity .12s ease, stroke .12s ease; }
+svg.minimap.has-sel .mreg,
+svg.minimap.has-sel .mroad,
+svg.minimap.has-sel .mplace { opacity: .15; }
+svg.minimap.has-sel .mreg.on,
+svg.minimap.has-sel .mroad.on,
+svg.minimap.has-sel .mplace.on { opacity: 1; }
+.msellabel text { fill: var(--gold); font-size: var(--mlabel, 34px);
+                  text-anchor: middle; pointer-events: none; paint-order: stroke;
+                  stroke: #0d1317; stroke-width: var(--mhalo, 9px);
+                  stroke-linejoin: round; }
+.maplegend { font-size: 11px; color: #7d8f99; margin: 4px 0 6px; }
+.go { margin-top: 8px; width: 100%; color: var(--gold); border-color: var(--gold); }
+
+/* 标签的显隐由 JS 逐个决定（`applyMapLabels`：只在不跟已放下的名字相交时才显）。
+   "悬停必显"那条（`.mplace:hover text`）已经从 CSS 搬到 JS —— 名字在**单独一层**，
+   不再是节点的子元素，`:hover` 的父子关系够不着它。见 app.js 的 mouseover 监听。 */
+
+/* 地图工具条：缩放/复位/全屏/编辑 */
+.maptools { position: absolute; top: 6px; right: 6px; z-index: 2; display: flex; gap: 3px; }
+.mtool { font-size: 11px; line-height: 1; padding: 3px 7px; cursor: pointer;
+         background: var(--surface2); color: var(--text-dim);
+         border: 1px solid var(--line); border-radius: 4px; font-family: inherit; }
+.mtool:hover { color: var(--gold); border-color: var(--gold); }
+
+/* 全屏看图：借的是早就死在那儿的那套 .modal 样式（见上面「浮层」段）。
+   ⚠️ 地图是**方形**的，所以别给它写死高度：写死高度 = `meet` 会按高度缩，
+   宽度全浪费掉（实测 1145px 宽的地图实际只画了 647px，白白少放一半标签）。
+   改成"宽度撑满、高度随比例"，放不下就纵向滚动。 */
+.mapmodal-box { width: min(1500px, 96vw); max-height: 92vh; }
+.mapmodal-body { padding: 12px; overflow: auto; }
+.mapmodal-body .minimap { width: 100%; height: auto; }
+
+/* ══════════ 存档弹窗 ══════════ */
+
+.saves-box { width: min(680px, 92vw); }
+/* 顶部一行：名字输入 + 保存 / 快速存 / 快速读 */
+.snew { display: flex; gap: 6px; margin-bottom: 10px; }
+.snew .sname {
+  flex: 1; min-width: 0; background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--r);
+  padding: 6px 9px; font-family: inherit; font-size: 13px;
+}
+.snew .sname:focus { outline: none; border-color: #c9a96155; }
+.slist { display: flex; flex-direction: column; gap: 4px; }
+.srow {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: var(--r); background: #ffffff08;
+}
+/* `min-width: 0` 是必需的：flex 子项默认不肯缩，长路径会把两个按钮挤出弹窗 */
+.srow .sinfo { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.srow .sinfo b { font-size: 12.5px; color: var(--text); }
+.srow .smeta {
+  font-size: 11px; color: var(--text-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ══════════ 世界编辑器（阶段 2）══════════
+   全屏浮层，不是面板：322px 的栏里改 41 个地块的属性不现实。
+   左边那张图**就是小地图那个组件**（同一个 `buildMapStatic`），只是放大 + 点＝选中。 */
+.ed-open { position: absolute; top: 6px; right: 6px; z-index: 2;
+           font-size: 11px; padding: 2px 7px; cursor: pointer;
+           background: var(--surface2); color: var(--text-dim);
+           border: 1px solid var(--line); border-radius: 4px; }
+.ed-open:hover { color: var(--gold); border-color: var(--gold); }
+
+#editor { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column;
+          background: rgba(8, 10, 14, .93); backdrop-filter: blur(3px); }
+.ed-head { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+           border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+.ed-head b { color: var(--gold); font-weight: 600; }
+.ed-path { font-family: var(--mono); font-size: 11px; color: var(--text-mute); }
+.ed-head .ed-msg { flex: 1; min-width: 0; overflow: auto; max-height: 62px; }
+.ed-prob { font-size: 12px; color: var(--warn); font-family: var(--mono); }
+.ed-prob.bad { color: var(--blood); }
+.ed-prob.good { color: var(--jade); }
+/* 提醒（不是错误）：键写歪了这类。不拦保存，所以用虚线边框与错误区分开 */
+.ed-prob.warn { color: var(--warn); border-left: 2px solid var(--warn); padding-left: 6px; }
+
+.ed-body { flex: 1; display: grid; grid-template-columns: 1fr 420px; min-height: 0; }
+.ed-map { padding: 12px; display: flex; flex-direction: column; min-height: 0; }
+/* 编辑器的左图就是同一张地图，只是容器大——标签该显示多少由
+   `mapZoomClass` 按屏幕像素算（见上面「标签密度分档」），这里不再另立规则。 */
+.ed-map .mapbox { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ed-map .minimap { flex: 1; min-height: 0; height: 100%; width: 100%; }
+
+.ed-side { border-left: 1px solid var(--line); overflow: auto; padding: 10px 14px 40px;
+           background: rgba(18, 21, 28, .8); }
+.ed-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.ed-tab { flex: 1; text-align: center; padding: 4px 0; cursor: pointer;
+          font-size: 12px; color: var(--text-dim);
+          border: 1px solid var(--line); border-radius: 4px; }
+.ed-tab.on { color: var(--gold); border-color: var(--gold); background: rgba(201,169,97,.08); }
+.ed-filter { width: 100%; margin-bottom: 6px; padding: 4px 6px; font-size: 12px;
+             background: var(--surface2); color: var(--text);
+             border: 1px solid var(--line); border-radius: 4px; }
+.ed-list { max-height: 190px; overflow: auto; border: 1px solid var(--line);
+           border-radius: 4px; margin-bottom: 10px; }
+.ed-item { padding: 3px 8px; font-size: 12px; cursor: pointer; color: var(--text-dim);
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ed-item i { float: right; color: var(--text-mute); font-style: normal; font-size: 11px; }
+.ed-item:hover { background: var(--surface2); color: var(--text); }
+.ed-item.on { background: rgba(201,169,97,.12); color: var(--gold); }
+
+.ed-insp { font-size: 12px; }
+.ed-title { color: var(--gold); font-weight: 600; margin: 4px 0 8px; }
+.ed-sub { margin: 12px 0 4px; color: var(--jade); font-size: 12px;
+          border-bottom: 1px solid var(--line-soft); padding-bottom: 2px; }
+.ed-hint { color: var(--text-mute); font-size: 11px; font-weight: 400; margin-left: 6px; }
+.ed-hint code { font-family: var(--mono); color: var(--text-dim); }
+
+.ed-side .kv { display: flex; align-items: flex-start; gap: 6px; margin: 3px 0; }
+.ed-side .kv .k { flex: 0 0 52px; color: var(--text-mute); font-size: 12px; padding-top: 3px; }
+.ed-side .kv .ed-in { flex: 1; min-width: 0; }
+input.ed-in, textarea.ed-in, select.ed-in {
+  padding: 3px 6px; font-size: 12px; font-family: var(--mono);
+  background: var(--surface2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 4px; resize: vertical; }
+input.ed-in:focus, textarea.ed-in:focus { outline: none; border-color: var(--gold); }
+
+.ed-frow { display: flex; gap: 4px; margin: 3px 0; }
+.ed-k { flex: 0 0 96px; }
+.ed-v { flex: 1; min-width: 0; }
+.ed-frow input, .ed-frow textarea { padding: 3px 6px; font-size: 12px; font-family: var(--mono);
+                 background: var(--surface2); color: var(--text);
+                 border: 1px solid var(--line); border-radius: 4px; resize: vertical; }
+.ed-frow input:focus, .ed-frow textarea:focus { outline: none; border-color: var(--gold); }
+.ed-frow .ed-x { align-self: flex-start; height: 24px; }
+.ed-x { flex: 0 0 auto; cursor: pointer; color: var(--text-mute); font-size: 11px;
+        background: none; border: 1px solid var(--line); border-radius: 4px; }
+.ed-x:hover { color: var(--blood); border-color: var(--blood); }
+.ed-add, .ed-del { margin: 4px 0 0; padding: 3px 10px; font-size: 11px; cursor: pointer;
+                   background: var(--surface2); color: var(--text-dim);
+                   border: 1px dashed var(--line); border-radius: 4px; }
+.ed-add:hover { color: var(--jade); border-color: var(--jade); }
+.ed-del { margin-top: 16px; border-style: solid; }
+.ed-del:hover { color: var(--blood); border-color: var(--blood); }
+.ed-seg { border: 1px solid var(--line-soft); border-radius: 4px;
+          padding: 4px 6px; margin: 4px 0; }
+.ed-dirty { color: var(--warn); font-size: 11px; font-family: var(--mono); }
+
+/* ══════════ 几何拖动（阶段 3）══════════
+   编辑器里**在图上直接改几何**：拖地块点＝改 `坐标`，拖控制点＝改 `路径线`。
+   面板不给拖——那里是"看"的。 */
+.ed-map .mdot { cursor: move; }
+/* 编辑器里整个命中圈都是"可拖"的——不然只有那几个像素的小圆点能拖，
+   手一偏就变成拖画布（用户报的"地块位置还是不能动"就是这么来的）。 */
+.ed-map .mplace .mhit { cursor: move; }
+.ectrl { fill: #0d1317; stroke: var(--gold); stroke-width: 2.5; cursor: move; }
+.ectrl:hover { fill: var(--gold); }
+.ed-seltip { fill: var(--text-mute); font-size: var(--mlabel, 11px); text-anchor: middle;
+             pointer-events: none; paint-order: stroke;
+             stroke: #0d1317; stroke-width: var(--mhalo, 3px); }
+/* 拖过的几何：输入框里的文本**过期了**（拖的是数值，文本要保存后才重新生成） */
+.ed-in.stale { border-color: var(--warn); color: var(--text-mute); }
+.stale-mark { color: var(--warn); font-style: normal; font-size: 10px;
+              margin-left: 4px; }
+.ed-new { width: 100%; margin-bottom: 8px; }
+
+/* 「连着它的路」清单（阶段 3）：从地块这一侧看连线，每条一个 ✕ */
+.ed-lrow { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+.ed-lname { flex: 1; font-size: 12px; color: var(--text-dim);
+            font-family: var(--mono); overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; }
+
+/* 路的透明命中带（只在编辑器里加）：线本身细得点不中，
+   靠这条 13px 宽的透明带抓「点线＝选中这条路」 */
+/* ⚠️ 必须显式 `pointer-events: stroke`：默认的 `visiblePainted` 在
+   `stroke: transparent` 上**不一定命中**（实测点上去落到 `<svg>` 自己身上）。 */
+.mroad-hit { fill: none; stroke: transparent; stroke-width: 13px;
+             pointer-events: stroke; cursor: pointer; }
+
+/* 顶栏的构建号（调试用）：低调、不抢眼，但要看得见 */
+#topbar .build { font-size: 11px; color: var(--text-mute, #7d8f99); opacity: .7;
+                 font-family: var(--mono); margin-left: 8px; align-self: center; }

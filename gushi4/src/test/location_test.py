@@ -140,10 +140,15 @@ real_root = set(w.get_location_children([]) or {})
 check(f'真实地点树路径非空（{len(real_paths)} 条）', len(real_paths) > 20, len(real_paths))
 check('真实数据里没有保留字段段', not any(has_reserved(p) for p in real_paths),
       [p for p in real_paths if has_reserved(p)])
+# 「迁移没丢属性」这件事由 `map_migration_test` 对着**冻结基线**逐条盯（那儿才判得准）。
+# 这里曾经是一条硬断言（"每个节点都要有属性"），2026-10-10 改成**只报个数**：
+# 用户开始**手写重建**世界之后，新建的地块先有名字、后填属性是正常的工序，
+# 而"属性该有哪些"是**内容问题**，不是结构问题——测试不该替作者定这个。
 _with_attrs = sum(1 for p in real_paths if w.get_location_attrs(p))
-check(f'真实数据已写 _属性（{_with_attrs}/{len(real_paths)} 个节点）',
-      _with_attrs == len(real_paths),
-      [p for p in real_paths if not w.get_location_attrs(p)])
+if _with_attrs < len(real_paths):
+    _empty = [p for p in real_paths if not w.get_location_attrs(p)]
+    print(f'  · 有 {len(_empty)} 个地点还没写属性（手写新世界时正常）：'
+          f'{_empty[:4]}{"…" if len(_empty) > 4 else ""}')
 check('叶节点属性可取到且含「功能」',
       '功能' in w.get_location_attrs('苍云大陆·东域·天道宗·外门弟子修炼区·落霞坪'),
       w.get_location_attrs('苍云大陆·东域·天道宗·外门弟子修炼区·落霞坪'))
@@ -239,9 +244,12 @@ check('每个节点都有 attrs 字段',
 check('没有节点名叫 _属性（否则就是遍历器漏了）',
       not any(n['name'].startswith('_') for n in before_nodes),
       [n['name'] for n in before_nodes if n['name'].startswith('_')])
-check('叶节点仍带描述',
-      sum(1 for n in before_nodes if n['desc']) == sum(1 for n in before_nodes if n['leaf']),
-      f"有描述{sum(1 for n in before_nodes if n['desc'])} 叶{sum(1 for n in before_nodes if n['leaf'])}")
+# 原来断言的是"有描述的节点数 == 叶节点数"——那只是**旧数据的形状**（当年只有叶节点带描述）。
+# 一旦某个叶节点长出了子节点，它变成枝节点却仍带描述（这是对的：格式允许任何节点带描述，
+# 前端点开当前所在地时要用它），这条就假红了。真正的不变量是下面这条：
+check('每个叶节点都有描述（点开不该是空的）',
+      all(n['desc'] for n in before_nodes if n['leaf']),
+      [n['name'] for n in before_nodes if n['leaf'] and not n['desc']][:3])
 
 # 换一棵带属性的树再建引擎视图，节点数必须一模一样
 # ⚠️ 要改的是 **engine 自己的** gc——上面那个 gc 是另一个对象

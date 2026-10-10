@@ -3,9 +3,14 @@ gushi4 全局配置 —— 所有【程序级】设置都在这里。
 
 与【世界观级】设置的分工：
     本文件       程序级：路径、模型、超时、日志等级
-    data/B1_worldState/global.json → 世界配置      世界观级：距离阈值、表上限、
-                                                  移动系数、心跳间隔…
+    data/B1_worldState/世界.map 的 `配置` 行   世界观级：表上限、心跳间隔、
+                                              机缘间隔…
     新增世界观不应该需要改本文件。
+
+⚠️ 世界观配置的真源是 **`世界.map` 的 `配置` 行**，不是 `global.json`——
+    地理与配置在阶段 0 一起搬到了 `.map`（见 `地图格式.md` §0）。
+    `global.json` 现在只剩四份字符串列表（世界规则/世界状态/演变规则/知识）。
+    改世界观配置**不用**重启：编辑器保存后会热重载（`GameController.reload_world`）。
 
 改本文件后需要重启程序（模块级常量，不做热重载）。
 """
@@ -17,16 +22,28 @@ import os
 #  一、路径
 # ══════════════════════════════════════════════════════════════
 
-BASE_PATH = r'E:\A.gushi\gushi4'
+# 由本文件位置反推项目根（common/base_cnf.py → common → 项目根）。
+# 曾经写死成 r'E:\A.gushi\gushi4'：换台机器或换个盘符就全落空，而且失败点散在
+# log / save / load_json / prompt 各处——报错信息（如 makedirs 失败）与真正原因
+# 隔着一整个调用链，排查成本远高于这一行。
+BASE_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 DEBUG_MODE = False              # 调试快照开关，运行中可用 /debug 切换
 
 WORLD_DATA_FILE = r'data\B1_worldState\global.json'
+#: 世界地理与配置的**真源**（地点/路/段/坐标/配置）。见 `地图格式.md`。
+#: JSON 里只剩"没有几何、也不常手改"的那几份列表（规则/状态/演变/知识）。
+#: ⚠️ 地理数据**不许**再留在 JSON 里——两处真源必然漂，而且漂了看不出来。
+WORLD_MAP_FILE = r'data\B1_worldState\世界.map'
 WORLD_DATA_SELECT = '苍云大陆·仙途诡道'      # 切换世界观改这里
 NPC_DATA_ROOT_PATH = r'data\B3_npc'
 
 SAVE_ROOT_PATH = r'save'        # 存档根目录（每个存档一个文件夹）
 SAVE_VERSION = 1                # 存档格式版本号，Schema 变更时递增
+# ⚠️ 2026-10-08「位置改坐标」那次**刻意没有升版本**：旧档（`当前所处位置` 是路径字符串）
+# 在 `GameController.migrate_positions()` 里被**就地迁移**成坐标，读得进来、语义不变。
+# 升了只会让这些本来能用的档报一句"可能 Schema 不兼容"的**假警报**——
+# 而这项目最怕的就是"警告多了没人看"。真有不可迁移的变更时才升。
 
 
 # ══════════════════════════════════════════════════════════════

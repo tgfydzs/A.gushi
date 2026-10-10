@@ -102,19 +102,22 @@ class L1_Perception:
     # ===================== 输入组装 =====================
 
     @staticmethod
-    def _player_view(player) -> dict:
+    def _player_view(player, where: str = None) -> dict:
         """
         玩家交给 L1 的部分。
 
         **只给 `当前状态CurrentState`**（位置/实力/身份——在场就能观察到的），
         扣掉 `持有物Inventory`（口袋里的东西）和 `描述Description`（背景秘密）。
         这两样只给 L3。
+
+        `where` 是**语义化后的位置**（可能是"…的路上（半路）"）。不传就退回路径——
+        与 `location_desc` 的分工见 `perceive()` 里的注释。
         """
         pd = player.player_dict if hasattr(player, 'player_dict') else (player or {})
         state = pd.get('当前状态CurrentState', {}) or {}
         return {
             '名称': pd.get('玩家名称name', '玩家'),
-            '位置': state.get('当前所处位置', ''),
+            '位置': where if where else state.get('当前所处位置', ''),
             '实力': state.get('实力等级', ''),
             '身份': state.get('当前身份', ''),
         }
@@ -174,18 +177,28 @@ class L1_Perception:
             'raw': 原始 LLM 输出（调试用）
         }
         """
-        player_loc = player.player_dict['当前状态CurrentState'].get('当前所处位置', '')
+        pstate = player.player_dict['当前状态CurrentState']
+        player_loc = pstate.get('当前所处位置', '')
         cur_event = list(event_layer.involved)
+
+        # ⚠️ 喂 L1 的"他在哪"走**语义**（`location_desc`），不走 `player_loc`（路径）：
+        # `path_at()` 在"在路上"时会静默退到最近地块，于是 L1 **分不出
+        # "他在路上"和"他就在那个村子"**——走在雪岭上的人拿到的地段链是最近那个
+        # 村子的，而且没有任何人知道这件事。S3 之后"在路上"是说得出口的。
+        locate_desc = getattr(world_layer, 'location_desc', None)
+        player_where = locate_desc(pstate) if locate_desc else player_loc
+        ctx_for = getattr(world_layer, 'location_context_for', None)
 
         user_input = {
             '当前事件NPC': cur_event,
             '当前事件范围': event_layer.scope.value,
             '世界观所有NPC': self._roster(all_npc_list),
-            '玩家': self._player_view(player),
+            '玩家': self._player_view(player, player_where),
             # 地段属性链（根→当前地点）。**不给继承结论**，由 L1 自己看着整条链判断
             # ——"东域灵气浓郁"对这个地点意味着什么，是叙事判断，不该由代码写死。
             # 用途：坊市里高声喊 ≠ 洞府里高声喊；这是"谁听得到"的判断依据之一。
-            '当前地段': world_layer.get_location_context(player_loc),
+            '当前地段': (ctx_for(pstate) if ctx_for
+                         else world_layer.get_location_context(player_loc)),
             '玩家附近NPC': self._nearby(world_layer, all_npc_list, player_loc, cur_event),
             '对话上下文': list(event_context.context),
             '幕后情报': list(director_context.context)[-10:],

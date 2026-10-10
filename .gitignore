@@ -20,3 +20,15 @@ venv/
 # 它们让 `run_ablation.py --report-only` 不调 API 就能出报告。
 gushi4/debug_rounds/
 gushi4/src/test/ablation_runs/
+
+# 地图编辑器每次保存前的自动备份（`map_io.save_map` 落的）。
+# 不进版本库：它的价值是"上一次存的是什么样"，而不是"历史上每一版"——
+# 后者交给 git，那份才有 review 的价值。
+gushi4/data/B1_worldState/_备份/
+
+# gushi5 的同类产物（规则与上面 gushi4 的对称——这两条路径在 gushi5 里同样存在）
+gushi5/debug_rounds/
+gushi5/data/B1_worldState/_备份/
+
+# 调试期随手截的图（文件名以 `_shot_` 开头，是临时产物，不是资料）
+_shot_*.png

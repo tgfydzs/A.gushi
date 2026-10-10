@@ -13,7 +13,8 @@
 2. **终端成为回归基准**。重构前后跑同样输入，终端输出必须逐行一致——
    这是"引擎抽取"这一步唯一的验收标准。
 3. **阻塞点全部外移**。引擎自己**从不调用 `input()`**：玩家输入由调用方传进
-   `run_round()`，移动目标由调用方先选定再通过 `resolve_move()` 换算。
+   `run_round()`。移动也不再需要前端先选目标——位置由 **L3 出 `去向`（地名）+ 代码落坐标**
+   维护（见 `地图实施计划.md` 阶段 1A）。
 
 # 事件流
 
@@ -51,10 +52,11 @@ from common.L2_character import L2_Character
 from common.L3_settlement import L3_Settlement
 from common.R1_propagation import R1_Propagation
 from common.R2_time import R2_Time
+from common.R4_opportunity import R4_Opportunity
 from common.background import BackgroundManager
 from common.memory import MemoryManager
 from common.progress import Stage
-from common.small_tool import find_move_marker, apply_move_target
+# 注：`find_move_marker` / `apply_move_target` 已随移动标记退役（见 handle_input 的说明）。
 
 logger = get_logger('Engine')
 
@@ -66,6 +68,14 @@ STREAM_EVENT_TYPES = frozenset({
 
 #: 历史最多留这么多条，避免长时间挂机把内存吃满
 HISTORY_LIMIT = 600
+
+#: **不出后端**的地点属性键。目前只有 `产出`——它是投放概率表（R4 掷骰用），
+#: 露给玩家等于把骰子给他看。
+#:
+#: 为什么在**后端**也拦一遍：`web/static/app.js` 的 `ATTR_HIDDEN` 是客户端过滤，
+#: 拦得住渲染，拦不住任何人直接 `GET /api/locations`（或读 `engine.location_tree()`）。
+#: 世界层（`get_location_attrs`）照旧带 `产出`——剥的只是**前端出口**，不是数据。
+FRONTEND_HIDDEN_ATTRS = frozenset({'产出'})
 
 _NARR_PREFIX = '旁白：'
 _PLAYER_SUFFIX = '（玩家）：'
@@ -111,6 +121,109 @@ def parse_context_line(line: str):
     return {'type': 'info', 'text': content, 'ts': ts}
 
 
+def map_view_of(w, st: dict = None, location: str = '') -> dict:
+    """
+    小地图要的全部数据 —— **只认"一个世界层 + 玩家在哪"**，不碰引擎的其它部分。
+
+    为什么抽成模块函数：编辑器要画的是**一份还没写盘的世界**（表单里那份）。
+    以前这里的图是"开编辑器时拍的一张快照"，表单改了它不知道，于是地图上会留下
+    删不掉也点不动的幽灵。现在编辑器把表单交给服务端，服务端用同一个函数算一遍
+    ——**预览与线上是同一段代码**，不是长得像的两段。
+
+    静态部分（地块/路/范围）与动态部分（当前坐标）**分开给**：
+    前者一局只变一次，后者每轮都动——前端可以只重绘后者，别每轮重建整棵 SVG。
+
+    ⚠️ 几何只给前端。引擎侧（L1/L3/R4）**一律不读**它做叙事判断，
+    见 `地图格式.md` §0 的纪律。
+    """
+    coords = w.geometry('坐标')
+    if not coords:
+        return {'ok': False, 'reason': '世界地图没有几何（缺 坐标 行）——'
+                                       '跑 `python -m common.map_io --layout`'}
+
+    info = {}
+
+    def walk(node):
+        attrs, desc, kids = w.normalize_node(node)
+        for k, v in (kids or {}).items():
+            a, d, grand = w.normalize_node(v)
+            info[k] = {
+                'desc': d,
+                'leaf': not grand,
+                # 属性照旧剥掉 `产出`（概率不给玩家看，见 FRONTEND_HIDDEN_ATTRS）
+                'attrs': {kk: vv for kk, vv in (a or {}).items()
+                          if kk not in FRONTEND_HIDDEN_ATTRS},
+            }
+            walk(v)
+
+    walk(w.get_location_tree() or {})
+
+    places = []
+    for name, c in coords.items():
+        meta = info.get(name) or {}
+        shape = w.geometry('范围').get(name)
+        places.append({
+            'name': name,
+            'path': w.place_paths().get(name, name),
+            'x': c[0], 'y': c[1],
+            'r': (shape[1][0] if shape and shape[0] == '圆' else 16.0),
+            'leaf': bool(meta.get('leaf', True)),
+            # 区域（`类型=大陆/区域/域/州`）= **面**，不是落脚点：前端只画它的范围圈，
+            # **不画那个点**（"去东域"不再是去一个放射中心，见 地图格式.md §9.1）
+            'region': w.is_region(name),
+            'desc': meta.get('desc', ''),
+            'attrs': meta.get('attrs', {}),
+        })
+
+    roads = []
+    for r in w.roads():
+        line = w.geometry('路径线').get(r.get('名') or '')
+        a, b = r.get('从'), r.get('到')
+        if not line and a in coords and b in coords:
+            line = [coords[a], coords[b]]
+        if a in coords and b in coords:
+            roads.append({'name': r.get('名', f'{a}-{b}'), 'from': a, 'to': b,
+                          'line': line})
+
+    xs = [c[0] for c in coords.values()]
+    ys = [c[1] for c in coords.values()]
+    # 范围圆也得算进画布：只按坐标点算的话，最大的那个区域（苍云大陆）会被裁掉一角，
+    # 而"世界边界"被裁掉看起来像是画错了，不是像边界。
+    for name, shape in w.geometry('范围').items():
+        c = coords.get(name)
+        if c and shape and shape[0] == '圆':
+            xs += [c[0] - shape[1][0], c[0] + shape[1][0]]
+            ys += [c[1] - shape[1][0], c[1] + shape[1][0]]
+    pad = 60
+    st = st or {}
+    cur = w.coord_at(st)
+    loc = w.locate(*cur) if cur else {}
+    # 在路上时把那条路也说出来——不然标记只会写"（在路上）"，
+    # 而玩家在**哪条**路上、走到第几成，图上写着却不告诉他（S3）
+    rd = w.on_road_at(*cur) if cur else None
+
+    return {
+        'ok': True,
+        'bounds': [min(xs) - pad, min(ys) - pad,
+                   (max(xs) - min(xs)) + 2 * pad, (max(ys) - min(ys)) + 2 * pad],
+        'places': places,
+        'roads': roads,
+        'current': {
+            'xy': [cur[0], cur[1]] if cur else None,
+            'path': location,
+            'name': w.name_at(st),
+            # ⚠️ 判据是 `rd`（`on_road_at`），**不是** `loc['在路上']`：
+            # 后者被自动布局的大半径 `范围` 罩住、永远为假（见 `on_road_at` 注释）。
+            # 用错的话后端算出了路、前端却still 走"不在路上"那条分支。
+            'on_road': bool(rd),
+            'near': loc.get('地块'),
+            'desc': w.location_desc(st) if cur else '',
+            'road': (rd or {}).get('路'),
+            't': (rd or {}).get('t'),
+        },
+    }
+
+
 class GameEngine:
     """
     一次游戏会话的全部运行时状态 + 一轮流水线的执行。
@@ -123,7 +236,7 @@ class GameEngine:
             act = engine.handle_input(input('>'))
             if act['action'] == 'break': break
             if act['action'] == 'run':
-                engine.run_round(act['text'], act['move_info'])
+                engine.run_round(act['text'])
     """
 
     def __init__(self, session_id: str = 'gushi4'):
@@ -141,11 +254,24 @@ class GameEngine:
         # ---- 状态控制器 ----
         self.gc = GameController(session_id=session_id)
         self.gc.on_output = self._gc_output       # 控制器的 print 并入事件流
-        self.gc.init_world()
-        self.gc.init_clock()
-        self.gc.init_all_npcs()
-        self.gc.init_player()
+        self.gc.new_game()                        # 世界 / NPC / 玩家 / 上下文 / 时钟
 
+        self._wire()
+        logger.info(f'引擎就绪：{self.player_name} @ {self.gc.player_location}')
+
+    def _wire(self):
+        """
+        把各层**接到当前这份状态上**——世界层与延迟队列都存在它们的字段里。
+
+        ⚠️ 单独抽出来是因为 `_new_game()` 会**把 `gc` 整个换掉**（新的世界层对象、
+        新的上下文、时钟归零）。各层是构造时把 `b1WorldLayer` / `deferred_queue`
+        存进字段的，不重新接线就会**拿着上一局那个世界**跑——而且不报错，只表现为
+        "地图改了没生效""位置不对"这类查不出根因的现象。
+
+        重造各层也顺带把它们的**内部计时清零**（心跳的 `_last_trigger_elapsed`、
+        机缘的 `_last_elapsed` 与每日计数都挂在层对象上），所以不必再给每个层
+        单独写一个 `reset()`。
+        """
         # ---- 各层（构造一次，逐轮复用）----
         self.l1_layer = L1_Perception()
         self.l1_layer.set_world(self.gc.b1WorldLayer)
@@ -154,12 +280,13 @@ class GameEngine:
         self.l3_layer.set_world(self.gc.b1WorldLayer)   # 读 `生命值体系` 配置
         self.r1_prop = R1_Propagation()
         self.r2_time = R2_Time(self.gc.b1WorldLayer)
+        # 机缘导演：按地点 `_属性.产出` 掷骰。纯规则、零 LLM、不写任何状态——
+        # 结果只进 L3 的输入，由 L3 落到 `持有物Inventory`（见 common/R4_opportunity.py）
+        self.r4_opp = R4_Opportunity(self.gc.b1WorldLayer)
         self.memory_mgr = MemoryManager()
         self.bg_mgr = BackgroundManager(self.gc.deferred_queue, self.l2_layer,
                                         self.memory_mgr)
-
         self.player_name = self.gc.player.player_dict.get('玩家名称name', '玩家')
-        logger.info(f'引擎就绪：{self.player_name} @ {self.gc.player_location}')
 
     # ===================== 事件流 =====================
 
@@ -338,6 +465,17 @@ class GameEngine:
             'can_undo': self.last_snap is not None,
         }
 
+    def map_view(self) -> dict:
+        """
+        小地图要的全部数据（**当前世界**的那一份）。**只读接口，不加锁**。
+
+        算法在模块级的 `map_view_of()`——它只认"一个世界层 + 玩家在哪"，
+        于是编辑器能拿一份**还没写盘**的世界层去算同一张图（见 `/api/map/preview`）。
+        预览与线上共用一个函数，就不会"长得像但两回事"。
+        """
+        st = self.gc.player.player_dict.get('当前状态CurrentState') or {}
+        return map_view_of(self.gc.b1WorldLayer, st, self.gc.player_location)
+
     def location_tree(self) -> dict:
         """
         地点树（规范化成前端好渲染的形状）+ 当前位置。
@@ -359,6 +497,8 @@ class GameEngine:
             for k, v in kids.items():
                 path = f'{prefix}·{k}' if prefix else k
                 attrs, desc, grand = norm(v)
+                # `norm` 给的是拷贝，剥键不会写回地点树（见 normalize_node）
+                attrs = {k: a for k, a in attrs.items() if k not in FRONTEND_HIDDEN_ATTRS}
                 out.append({'name': k, 'path': path, 'leaf': not grand,
                             'desc': desc, 'attrs': attrs,
                             'children': walk(v, path) if grand else []})
@@ -414,15 +554,17 @@ class GameEngine:
         """
         判断一条输入该怎么走，**不执行流水线**。
 
-        :return: `{'action': ..., 'text': ..., 'move_info': ..., 'marker': ...}`
+        :return: `{'action': ..., 'text': ...}`
 
         | action        | 含义                                   |
         |---------------|----------------------------------------|
         | `empty`       | 空输入，忽略                           |
         | `break`       | 退出                                   |
         | `skip`        | 已处理（命令/撤回），跳过本轮          |
-        | `need_move`   | 输入里有移动标记，**调用方先选目标**   |
-        | `run`         | 正常推进一轮，用 `text` + `move_info`  |
+        | `run`         | 正常推进一轮，用 `text`                 |
+
+        > 原来的 `need_move` 已随移动标记一起退役：地图是主输入，玩家要么点地图、
+        > 要么直接打字说去哪（后者本来就是自由文本，走 L3 判去向那条路）。
         """
         if not (raw or '').strip():
             return {'action': 'empty'}
@@ -443,11 +585,20 @@ class GameEngine:
                         'text': '⚡ S1 旁路已摘除——移动耗时改由 L3 判断，它没有存在理由了'})
             return {'action': 'skip'}
 
+        if s == '/new':
+            self._new_game()
+            return {'action': 'skip'}
+
+        if s == '/reload':
+            self._reload_world()
+            return {'action': 'skip'}
+
         if s == '/help':
             for line in (
                 '  /save <名> /load <名> /saves /quick_save /quick_load',
+                '  /new 开新游戏（清掉这一局的进度；磁盘上的存档不动）',
+                '  /reload 手动重载世界地图（编辑器保存时会自动做）',
                 '  /context [global|event|director]  /event  /npcs  /player [inv|desc]',
-                '  {移动}  → 交互式选择目标位置',
                 '  !!  撤回上一条     /debug 调试快照     exit',
             ):
                 self._emit({'type': 'info', 'text': line})
@@ -462,27 +613,21 @@ class GameEngine:
                 self.hydrate_history()
             return {'action': 'skip'}
 
-        # ---- 移动标记：这里**只检测不做导航** ----
-        # 终端要让玩家在 `input()` 菜单里选，网页要让他在地点树里点。
-        # 引擎不知道也不该知道是哪种，所以把选择权交回调用方。
-        marker = find_move_marker(raw)
-        if marker:
-            return {'action': 'need_move', 'raw': raw, 'marker': marker}
+        # 移动标记（`{移动}` / `/move`）已退役：地图成为主输入。
+        # 手打的"我往青木山脉去"本来就是自由文本，直接当普通一轮交给 L3 判 `去向` 即可——
+        # 所以这里不再需要"先让前端选个目标"这一步。
+        return {'action': 'run', 'text': raw}
 
-        return {'action': 'run', 'text': raw, 'move_info': None}
-
-    def resolve_move(self, raw: str, selected_path: str):
+    def move_to(self, path: str):
         """
-        把选中的目标位置填回输入。调用方拿到目标后调这个，再 `run_round`。
+        **已退役**（2026-10-08）。原本给网页地点树点击用：`点节点 → /api/move → 引擎写位置`。
 
-        :return: `(完整输入文本, move_info)`；`selected_path` 为空时返回 `(None, None)`
+        现在位置由 **L3 的 `去向` + `GameController.set_position()`** 维护，
+        地图上的点击是"下达去向"而不是直接改坐标（阶段 1B）。
+        留这个桩是为了让"调它的人"立刻看到原因，而不是一个 AttributeError。
         """
-        if not selected_path:
-            return None, None
-        marker = find_move_marker(raw)
-        if not marker:
-            return raw, None
-        return apply_move_target(raw, marker, selected_path, self.gc.player)
+        raise NotImplementedError(
+            'move_to 已退役：移动改走「点地图/打字 → L3 判去向 → set_position 落坐标」')
 
     def undo(self) -> bool:
         if self.last_snap is None:
@@ -495,9 +640,64 @@ class GameEngine:
         self._emit({'type': 'info', 'text': '↩ 已撤回上一条'})
         return True
 
-    def move_to(self, path: str):
-        """直接移动（网页地点树点击）。返回换算好的输入文本与 move_info。"""
-        return self.resolve_move('/move', path)
+    def _new_game(self) -> bool:
+        """
+        开新游戏：**这一局的运行期状态整个换掉**，回到刚开局的样子。
+
+        动的是"跑出来的"那部分：世界从数据重读、NPC 名册重建、玩家回到初始档、
+        三个上下文与时钟重来、轮次归零、撤回快照与叙事流清掉、后台产出队列倒掉。
+        **不动**磁盘上的 `save/`——那是上一局的成果，要删得显式 `/save del`。
+        """
+        # 一轮跑着的时候不许换地基：`run_round` 全程持这把锁，不抢它就会在它
+        # 读着世界的时候把世界换掉。抢不到就**明说**（不排队——上一轮要跑十几秒，
+        # 排队会让按钮看起来"点了没反应"）。
+        if not self._lock.acquire(blocking=False):
+            self._emit({'type': 'info', 'text': '⏳ 上一轮还在跑，等它跑完再开新游戏'})
+            return False
+        try:
+            self.round_no = 0
+            self.last_snap = None
+            self._history.clear()
+            self.gc.new_game()          # 世界 / NPC / 玩家 / 上下文 / 时钟 / 队列
+            self._wire()                # 各层重新接到新状态上（顺带清零内部计时）
+            logger.info(f'🆕 开新游戏：{self.player_name} @ {self.gc.player_location}')
+            self._emit({'type': 'info', 'text': f'🆕 新游戏：{self.player_name} @ '
+                                                f'{self.gc.player_location}'})
+            self.show_scene()
+            return True
+        finally:
+            self._lock.release()
+
+    def _reload_world(self) -> bool:
+        """
+        手动重载世界地图：把 `世界.map` 重新读进来盖到**活着的**世界上。
+
+        编辑器保存时**会自动做这件事**；这个命令是给"在编辑器外面改了 `.map`
+        （手改、`git` 切分支、跑 `map_io` 那个命令行）"用的——没有它就只能重启。
+
+        走的是**同一条路径**（`gc.reload_world`），所以"哪一类立即生效"的回执一致。
+        它只盖 `.map` 拥有的那几把键、并清掉几何派生缓存；`世界状态列表` 那种
+        **运行期在长的**东西不会被抹回开局。
+
+        ⚠️ 世界层是**原地改**的，所以这里**不需要** `_wire()`——各层拿着的是同一个
+        对象。改动后要不要重新接线，取决于"对象换没换"，不是"内容变没变"。
+        """
+        if not self._lock.acquire(blocking=False):
+            self._emit({'type': 'info', 'text': '⏳ 上一轮还在跑，等它跑完再重载'})
+            return False
+        try:
+            r = self.gc.reload_world()
+            for line in (r.get('立即生效') or []):
+                self._emit({'type': 'info', 'text': f'♻️ 立即生效：{line}'})
+            for line in (r.get('需重启') or []):
+                self._emit({'type': 'info',
+                            'text': f'♻️ 改「{line}」要重启才生效（下一局才读它）'})
+            before, after = r.get('世界状态条数', [None, None])
+            self._emit({'type': 'info', 'text': f'♻️ 世界已重载'
+                                                f'（世界状态 {before} → {after} 条）'})
+            return True
+        finally:
+            self._lock.release()
 
     # ===================== 主流程 =====================
 
@@ -583,16 +783,16 @@ class GameEngine:
         dt.dump_layer_io(self.round_no, 'L2', results)
         return results
 
-    def run_round(self, player_input: str, move_info: dict = None) -> dict:
+    def run_round(self, player_input: str) -> dict:
         """
         跑完整一轮。**全程持锁**——两个前端同时发输入时不能交错。
 
         :return: 本轮摘要 `{round, input, narration, dialogues, minutes, clock}`
         """
         with self._lock:
-            return self._run_round_locked(player_input, move_info)
+            return self._run_round_locked(player_input)
 
-    def _run_round_locked(self, player_input: str, move_info: dict = None) -> dict:
+    def _run_round_locked(self, player_input: str) -> dict:
         gc = self.gc
         narration, dialogues = [], []
 
@@ -600,7 +800,11 @@ class GameEngine:
 
         # ── 快照 ──
         self.last_snap = gc.snapshot()
-        loc_before = gc.player_location
+        loc_before = gc.player_location          # 路径：R1/R4 要的是"哪个地块"
+        # L1/L3 要的是**语义**："在路上"必须说得出口，不能再静默塌缩成最近地块（S3）。
+        # 这一对属性一取就是当轮的，落盘之后不重算——和 `loc_before` 同一时点。
+        loc_desc = gc.player_location_desc
+        loc_ctx = gc.player_location_context
         dt.snapshot_npcs(self.round_no, 'before', gc.all_npc_list)
         dt.snapshot_scene(self.round_no, 'before', gc)
 
@@ -651,6 +855,11 @@ class GameEngine:
         recent = list(gc.global_context.context)[-10:]
         known_locs = gc.b1WorldLayer.list_location_paths(max_depth=3)
 
+        # ── 机缘导演：按**出发地**掷骰（纯规则，零 LLM）──
+        # 用 loc_before 而不是移动后的位置：机缘发生在"他这轮待着的地方"。
+        # 它只掷出**事实**，落不落地由 L3 判——唯一客观写入口（D5/D12）不能破。
+        opportunities = self.r4_opp.roll(loc_before, gc.game_clock, gc.player)
+
         with Stage('L3 结算' if l2_results else 'L3 结算（独处）',
                    on_event=self._emit):
             if l2_results:
@@ -659,23 +868,24 @@ class GameEngine:
                     npcs=locked_npcs,
                     l2_results=l2_results,
                     player_input=player_input,
-                    location=loc_before,
-                    move_hint=move_info,
+                    location=loc_desc,
+                    location_context=loc_ctx,
                     world_state=gc.b1WorldLayer.dict.get('世界状态列表', []),
                     recent_context=recent,
                     known_locations=known_locs,
+                    opportunities=opportunities,
                 )
             else:
                 l3_result = self.l3_layer.settle_solo(
                     player=gc.player,
                     player_input=player_input,
-                    location=loc_before,
+                    location=loc_desc,
+                    location_context=loc_ctx,
                     game_time=gc.game_clock.now_str(),
-                    has_move=bool(move_info),
-                    move_hint=move_info,
                     world_state=gc.b1WorldLayer.dict.get('世界状态列表', []),
                     recent_context=recent,
                     known_locations=known_locs,
+                    opportunities=opportunities,
                 )
         dt.dump_layer_io(self.round_no, 'L3', l3_result)
 
@@ -695,12 +905,6 @@ class GameEngine:
             game_clock=gc.game_clock,
             minutes=l3_result['本轮耗时分钟'],
         )
-
-        # ── 移动落盘（L3 若已改过位置，这里兜底） ──
-        if move_info and gc.player_location != move_info['to']:
-            gc.player.player_dict['当前状态CurrentState']['当前所处位置'] = move_info['to']
-            gc.add_context_all(
-                f'{self.player_name}（移动）：从{move_info["from"]}前往{move_info["to"]}')
 
         # ── 快照 after + 审计 ──
         dt.snapshot_npcs(self.round_no, 'after', gc.all_npc_list)

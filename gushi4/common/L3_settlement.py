@@ -57,6 +57,10 @@ from common.L2_character import OBJECTIVE_TABLES
 
 logger = get_logger('L3_Settlement')
 
+#: L3 不许写的状态字段——位置是代码的活（`去向` 才是它的输出）。
+#: 放在模块级是为了让测试能直接引用，避免两处各写一份清单。
+_POSITION_KEYS = ('位置', '当前所处位置', '行进')
+
 
 def sanitize_objective_delta(delta: dict) -> dict:
     """
@@ -70,6 +74,7 @@ def sanitize_objective_delta(delta: dict) -> dict:
 
     out = {'增加': {}, '删减': {}}
     dropped = []
+    dropped_pos = []
     for section in ('增加', '删减'):
         body = pick_field(delta, section, default={}) or {}
         if not isinstance(body, dict):
@@ -77,10 +82,22 @@ def sanitize_objective_delta(delta: dict) -> dict:
         for field, value in body.items():
             # 模型常把 `当前状态CurrentState` 写成 `当前状态`，必须过规范化
             canon = canonical_table(field, OBJECTIVE_TABLES)
-            if canon:
-                out[section][canon] = value
-            else:
+            if not canon:
                 dropped.append(field)
+                continue
+            if canon == '当前状态CurrentState' and isinstance(value, dict):
+                # **位置归代码**：L3 只能给 `去向`（地名），坐标与派生路径由 Python 落。
+                # 2026-10-08 的事故就是这么来的——它写了 `青木山脉方向（离天道宗三日脚程）`，
+                # 当轮所有地段能力一起静默失效。所以这里硬丢，不给它留缝。
+                for k in _POSITION_KEYS:
+                    if k in value:
+                        dropped_pos.append(k)
+                        value = {kk: vv for kk, vv in value.items() if kk != k}
+            out[section][canon] = value
+
+    if dropped_pos:
+        logger.warn(f'L3 想写位置字段 {sorted(set(dropped_pos))}，已丢弃——'
+                    f'位置由代码从 `去向` 落坐标（见 apply_l3_settlement）')
 
     if dropped:
         logger.warn(f'L3 越权字段被丢弃（属角色域）：{sorted(set(dropped))}')
@@ -133,6 +150,71 @@ _HEALTH_CLAUSE_NUMERIC = """
 """
 
 
+# ===================== 机缘（R4 掷骰的结果怎么落地）=====================
+#
+# `common/R4_opportunity.py` 按地点的 `_属性.产出` 掷骰，把结果作为 **`本轮机缘`**
+# 放进 L3 的输入。这一段是它的配套条款——**只在真的掷出东西时追加**：
+# 没机缘的轮次不必为一段用不上的规则付 token，输入里的字段与这里的说明也就始终成对。
+#
+# 关键分工（别写反）：
+#     骰子决定**有没有**（Python，已定，不可争辩）
+#     L3 决定**是什么样、谁拿到、怎么拿到**（叙事判断）
+#
+# 所以 `条件`（"深入山脉腹地" / "需破开血月光门"）不是摆设——它是**硬门槛**，
+# 由 L3 判断当前是否满足。不满足就不得落地，这条不能靠 LLM 自觉放过。
+
+_OPPORTUNITY_CLAUSE = """
+
+# 本轮机缘（`本轮机缘` 非空时才出现）
+
+输入里的 `本轮机缘` 是**已经掷定的事实**：此地此刻**确实**有这些物事。
+它不是提议，不是玩家的声明，也不需要你论证它凭什么存在——
+**不要质疑它是否存在**，也不要"帮玩家找个理由"把它否掉。
+
+你要判断的是**归属与取得**：
+
+## 1. `条件` 是硬门槛，先判它
+
+`条件` 是这条机缘的叙事前置（"深入山脉腹地" / "需通晓丹道或有人引路" /
+"需破开血月光门" / "每三百年开启时方可入内"）。**看当前实况判断是否满足**：
+
+- 满足 → 可以落地
+- 不满足 → **不得落地**。哪怕玩家这轮正好在找东西，也只能用旁白如实交代
+  （"山壁上确实有灵草，但都长在断崖那侧，够不着"），不许悄悄给他
+
+## 2. 归谁：默认玩家，但有例外
+
+- **默认归玩家**——他是唯一在场的行动者。
+- 现场有 NPC **明显更近、更有理由、且这轮有相应行为** → 可以判给它
+  （写进该 NPC 的客观增量）。世界不是只有玩家在捡东西。
+- 玩家这轮**够不着**（人在别处、被隔开、正被别人缠住、明确在忙别的）
+  → **不落地**，只用旁白交代。留下"下次还可以来"的钩子是好的。
+
+## 3. 怎么落地
+
+写进 `持有物Inventory`（键 = 物品名，值 = 数量或一句描述），并给一条旁白。
+**同一件事只发生一次**——不要因为旁白提到了就重复写增量。
+
+物品名**保持原样**。它是账目上的键，改了就对不上账。
+
+**同名之物写进同一个键**：已经有 `灵草（三株）`，这轮又采到一株，就把它改成
+`灵草（四株）`——**不要新增一个 `灵草（一株）` 的键**。`持有物Inventory` 是字典、
+**没有条数上限也永不裁剪**，键一碎账就散了（同一件东西会散成十几条）。
+
+## 4. 不许出现的东西
+
+- **不要提概率**。你拿到的只有物品和条件，没有比率；不许写"三成可能""多半找不到"这类话。
+- **不要改实力等级**。捡到东西不会涨修为，这是长期修炼的事。
+- **不要顺手改 `生命` / `灵力`**，除非这轮玩家确实服用了、用掉了它——那按常理结算。
+
+## 5. 质感：贴合地段
+
+发现的方式要长在这个地方的样子上：青木山脉的灵草在背阴石缝里，
+坊市的货在人手上不在街角，遗迹的东西埋在禁制之下。
+**不要写成天降馅饼**——那会让地点属性白写。
+"""
+
+
 class L3_Settlement:
     """结算层：跨实体客观状态判定 + 全局旁白 + 本轮耗时"""
 
@@ -174,6 +256,18 @@ class L3_Settlement:
             return ''
         return _HEALTH_CLAUSE_NUMERIC
 
+    @staticmethod
+    def _opportunity_clause(opportunities: list = None) -> str:
+        """
+        `本轮机缘` 的条款。**只在真的掷出东西时追加**（见 `_OPPORTUNITY_CLAUSE`）。
+
+        与 `_health_clause()` 同一个姿态：条款跟着本轮实况走，而不是无条件挂在
+        每轮的 system prompt 上。
+        """
+        if not opportunities:
+            return ''
+        return _OPPORTUNITY_CLAUSE
+
     # ===================== 输入组装 =====================
 
     @staticmethod
@@ -207,7 +301,8 @@ class L3_Settlement:
 
     def _build_input(self, player, npcs, l2_results, player_input, move_hint=None,
                      location=None, world_state=None, recent_context=None,
-                     known_locations=None) -> dict:
+                     known_locations=None, opportunities=None,
+                     location_context=None) -> dict:
         intents = []
         for r in (l2_results or []):
             if r.get('动作意图', {}).get('类型') in (None, '无') and not r.get('回应Response'):
@@ -220,14 +315,18 @@ class L3_Settlement:
                 '他感知到的': (r.get('感知输入') or '')[:200],
             })
 
-        return {
+        payload = {
             '玩家实况': self._player_full(player),
             '参与NPC客观侧': [self._objective_side(n) for n in (npcs or [])],
             '各NPC的动作意图': intents,
             '玩家本轮输入': player_input,
             '当前位置': location or '',
-            '当前地段': self._location_context(location),
+            # 调用方（引擎）已经把「在路上」算成语义了就直接用；没给才自己从路径推
+            # ——那条退路是留给测试里的假世界的，生产路径一律走上面这条（S3）
+            '当前地段': (location_context if location_context is not None
+                         else self._location_context(location)),
             '世界状态': list(world_state or []),
+            # 空管道（引擎从来不传）——见 solo 分支那段注释
             '移动信息': move_hint or {},
             # ⚠️ 必须给：**结算层没有别的记忆**。它看不到 NPC 的主观表，
             # 只看得到本轮的意图。上一轮"丹药到底给没给"只存在于旁白和上下文里，
@@ -236,6 +335,12 @@ class L3_Settlement:
             # 已知地点参考：位置字符串一旦编造，之后所有距离计算都跟着漂
             '已知地点': list(known_locations or []),
         }
+        if opportunities:
+            # 机缘是**事实**（骰子已定，见 common/R4_opportunity.py），
+            # 不是「动作意图」那种提议，所以单独一个字段、不混进意图列表。
+            # 空的时候整个字段不出现——字段与条款始终成对（见 _OPPORTUNITY_CLAUSE）。
+            payload['本轮机缘'] = list(opportunities)
+        return payload
 
     # ===================== 主入口：有 NPC =====================
 
@@ -243,10 +348,14 @@ class L3_Settlement:
                          location: str = '', move_hint: dict = None,
                          world_state: list = None,
                          recent_context: list = None,
-                         known_locations: list = None) -> dict:
+                         known_locations: list = None,
+                         opportunities: list = None,
+                         location_context: list = None) -> dict:
         """
         有 NPC 参与时结算。
 
+        :param opportunities: 本轮机缘（`R4_Opportunity.roll()` 的产出）。
+                              骰子已定"有没有"，本层判"归谁、怎么拿到"。
         :return: {
             '玩家实例': 已净化的增量,
             'NPC实例': {名: 已净化的客观增量},
@@ -258,8 +367,9 @@ class L3_Settlement:
         """
         user_input = self._build_input(player, npcs, l2_results, player_input,
                                        move_hint, location, world_state,
-                                       recent_context, known_locations)
-        raw = self._call(user_input, 'L3_settlement_sys.txt', 'L3')
+                                       recent_context, known_locations,
+                                       opportunities, location_context)
+        raw = self._call(user_input, 'L3_settlement_sys.txt', 'L3', opportunities)
 
         result = self._normalize(raw)
         logger.info(f'L3 结算：玩家增量={list(result["玩家实例"]["增加"]) + list(result["玩家实例"]["删减"])} '
@@ -274,20 +384,30 @@ class L3_Settlement:
                     move_hint: dict = None,
                     world_state: list = None,
                     recent_context: list = None,
-                    known_locations: list = None) -> dict:
+                    known_locations: list = None,
+                    opportunities: list = None,
+                    location_context: list = None) -> dict:
         """
         玩家无 NPC 时的自主行动（原 N6-Player）。
 
         同一层、同一契约的另一分支——它同样只看得到玩家实况，
         同样只写客观状态，只是没有别人的动作意图要结算。
+
+        :param opportunities: 本轮机缘。独处恰恰是最该有它的场景——
+                              一个人在山里，收获本来就不需要谁在场。
         """
         user_input = {
             '玩家实况': self._player_full(player),
             '玩家本轮输入': player_input,
             '当前位置': location,
-            '当前地段': self._location_context(location),
+            # 调用方（引擎）已经把「在路上」算成语义了就直接用；没给才自己从路径推
+            # ——那条退路是留给测试里的假世界的，生产路径一律走上面这条（S3）
+            '当前地段': (location_context if location_context is not None
+                         else self._location_context(location)),
             '游戏时间': game_time,
-            '本轮含移动': bool(has_move),
+            # `本轮含移动` 是退役的 S1 留下的空管道（引擎从来不传、prompt 却写着），
+            # 已从 prompt 的输入说明里删掉——「写了却永远为空」比没有更糟。
+            # 移动语义现在由 `当前位置` 承载（可能是「…的路上（半路）」）。
             # 有 `{移动}` 标记时给出起点终点；自由文本移动时为空，
             # 那时靠"当前位置"和 L3 自己写的新位置对照。见 prompt 第六部分。
             '移动信息': move_hint or {},
@@ -295,7 +415,9 @@ class L3_Settlement:
             '最近经过': list(recent_context or [])[-10:],
             '已知地点': list(known_locations or []),
         }
-        raw = self._call(user_input, 'L3_solo_sys.txt', 'L3·独处')
+        if opportunities:
+            user_input['本轮机缘'] = list(opportunities)
+        raw = self._call(user_input, 'L3_solo_sys.txt', 'L3·独处', opportunities)
         result = self._normalize(raw)
         logger.info(f'L3 独处：玩家增量={list(result["玩家实例"]["增加"]) + list(result["玩家实例"]["删减"])} '
                     f'| 旁白{len(result["旁白"])}条 | {result["本轮耗时分钟"]}分')
@@ -303,10 +425,14 @@ class L3_Settlement:
 
     # ===================== 内部 =====================
 
-    def _call(self, user_input: dict, prompt_file: str, label: str) -> dict:
-        # 数值条款**追加**在 system prompt 末尾，不走 `load_prompt` 的占位符机制——
-        # 那个机制是给 `data/prompt/*_custom/` 注入用的，混在一起会互相打架
-        sys_prompt = load_prompt(prompt_file) + self._health_clause()
+    def _call(self, user_input: dict, prompt_file: str, label: str,
+              opportunities: list = None) -> dict:
+        # 数值条款与机缘条款都**追加**在 system prompt 末尾，不走 `load_prompt` 的占位符机制——
+        # 那个机制是给 `data/prompt/*_custom/` 注入用的，混在一起会互相打架。
+        # 这两段都是"按世界配置 / 按本轮实况决定要不要"的开关式条款，不是资料文件。
+        sys_prompt = (load_prompt(prompt_file)
+                      + self._health_clause()
+                      + self._opportunity_clause(opportunities))
         context = [
             {'role': 'system', 'content': sys_prompt},
             {'role': 'user', 'content': json.dumps(user_input, ensure_ascii=False)},
@@ -330,6 +456,12 @@ class L3_Settlement:
             '本轮耗时分钟': self._parse_minutes(
                 pick_field(raw, '本轮耗时分钟', '耗时分钟', default=None)),
             '耗时理由': str(pick_field(raw, '耗时理由', default='') or '')[:30],
+            # 去向：**地名**（不是路径串）。落坐标是 `GameController` 的活。
+            # 解析不出就原地不动——宁可不动，也不要一个编出来的位置。
+            '去向': str(pick_field(raw, '去向', '目的地', default='') or '').strip()[:40],
+            # 行程：本轮**走到哪了**，语义（不是数字、不是坐标）。
+            # 落成路径线上的哪一点同样是 `GameController` 的活（S3 / 1A.1）。
+            '行程': str(pick_field(raw, '行程', '行进', default='') or '').strip()[:30],
             '破裂观察': self._normalize_broken(
                 pick_field(raw, '破裂观察', default=None)),
             'raw': raw,

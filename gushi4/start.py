@@ -349,6 +349,10 @@ def mode_term() -> int:
 SUITES = [
     ('smoke_test',      '模块/配置/纯规则/信息域边界/存档往返'),
     ('location_test',   '地点树归一化 / 地段属性 / 保留键不泄漏'),
+    ('map_migration_test', '与冻结的地点语义基线逐条对照 / 地理单一真源'),
+    ('map_edit_test',   '编辑器往返无损 / 改一条只动一行 / 写盘三查 / 前端语法'),
+    ('travel_test',     '沿路推进 / 落点在线上 / 方向不反 / 在路上说得出口'),
+    ('opportunity_test', '机缘导演 / 产出掷骰 / 节流上限 / 不越权写状态'),
     ('dry_run',         '假 LLM 跑完整一轮，验管线闭合'),
     ('background_test', '心跳 / 后台落盘 / 记忆巩固'),
     ('ui_test',         '引擎 / 事件流 / 终端渲染保真 / 叙事流历史'),

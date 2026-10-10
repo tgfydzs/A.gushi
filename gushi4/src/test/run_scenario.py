@@ -6,7 +6,7 @@
 **连续两笔交易一败一成**（测 L3 的客观一致性）。
 
 跑法：
-    cd E:/A.gushi/gushi4
+    cd <项目根>
     python src/test/run_scenario.py                       # 跑默认剧本
     python src/test/run_scenario.py 路径/剧本.txt          # 跑指定剧本
 

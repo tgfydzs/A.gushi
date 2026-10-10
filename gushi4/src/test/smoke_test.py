@@ -7,7 +7,7 @@ gushi4 离线冒烟测试 —— **不发起任何 LLM 调用**。
   3. 三个信息域的边界没被破坏（L2 只能写主观表、L3 只能写客观表）
 
 跑法：
-    cd E:/A.gushi/gushi4 && python src/test/smoke_test.py
+    cd <项目根> && python src/test/smoke_test.py
 """
 
 import json

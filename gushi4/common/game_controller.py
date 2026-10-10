@@ -24,7 +24,8 @@ from common import log as log_mod
 from common.progress import terminal_output
 from common.save_load import SaveManager
 from common.base_cnf import (BASE_PATH, WORLD_DATA_FILE, WORLD_DATA_SELECT,
-                             NPC_DATA_ROOT_PATH, SAVE_VERSION)
+                             WORLD_MAP_FILE, NPC_DATA_ROOT_PATH, SAVE_VERSION)
+from common import map_io
 from common.small_tool import (load_json_to_dict, walk_category_files,
                                load_npc_list_from_json, _apply_dict_delta)
 from common import time_int
@@ -79,8 +80,20 @@ class GameController:
 
     def init_world(self):
         world_data = load_json_to_dict(os.path.join(BASE_PATH, WORLD_DATA_FILE))
-        self.b1WorldLayer = B1WorldLayer(world_data[WORLD_DATA_SELECT])
-        logger.debug(f'世界数据已载入：{WORLD_DATA_SELECT}')
+        world = world_data[WORLD_DATA_SELECT]
+
+        # 地理与配置的**真源是 `.map`**（见 地图格式.md）。JSON 只留没有几何、
+        # 也不常手改的那几份列表（规则/状态/演变/知识）。
+        # ⚠️ 读不到就**报错停下**，不静默降级——空地图会让"所有地点都不存在"，
+        # 而玩家看到的会是"NPC 集体失忆"这种查不出根因的现象。
+        map_path = os.path.join(BASE_PATH, WORLD_MAP_FILE)
+        if not os.path.isfile(map_path):
+            raise FileNotFoundError(
+                f'找不到世界地图 {WORLD_MAP_FILE}（地理与配置的真源）。'
+                f'首次生成：python -m common.map_io --export --from-json')
+        world = map_io.apply_map(world, map_io.load_world_map(map_path))
+        self.b1WorldLayer = B1WorldLayer(world)
+        logger.info(f'世界已载入：{WORLD_DATA_SELECT}（地理与配置来自 {WORLD_MAP_FILE}）')
 
     def init_clock(self):
         start_time = self.b1WorldLayer.get_start_time()
@@ -98,21 +111,65 @@ class GameController:
             for npc in load_npc_list_from_json(npc_file):
                 self.all_npc_list.add(npc)
 
-        # 用世界配置覆写截断上限。
-        # gushi3 只覆盖了 3 张表，另外 4 张无上限无限增长——这里全部走 CAP_MAP。
-        # 配置键：NPC_上限_<属性名>，如 NPC_上限_MAX_PLAYER_OBSERVATION
-        for table, attr in B3NPCLayer.CAP_MAP.items():
+        self.apply_config_caps()
+        logger.info(f'NPC 载入完成：{len(self.all_npc_list)} 个')
+
+    def apply_config_caps(self) -> dict:
+        """
+        用世界配置覆写各张 NPC 表的截断上限。
+
+        gushi3 只覆盖了 3 张表，另外 4 张无上限无限增长——这里全部走 `CAP_MAP`。
+        配置键：`NPC_上限_<属性名>`，如 `NPC_上限_MAX_PLAYER_OBSERVATION`。
+
+        ⚠️ 单独抽出来是因为它是**类属性**：编辑器改了配置，光把字典盖一遍没有用，
+        必须重跑这个覆写。不抽出来的话，界面会说"已保存并热重载"，而
+        `MAX_MEMORY` 纹丝不动——正是 `NPC_上限_*` 那个前科的形状。
+        """
+        for _, attr in B3NPCLayer.CAP_MAP.items():
             val = self.b1WorldLayer.get_config(f'NPC_上限_{attr}', None)
             if val is not None:
                 setattr(B3NPCLayer, attr, int(val))
-        caps = {t.split('(')[0]: getattr(B3NPCLayer, a) for t, a in B3NPCLayer.CAP_MAP.items()}
-        logger.info(f'NPC 载入完成：{len(self.all_npc_list)} 个 | 表上限={caps}')
+        caps = {t.split('(')[0]: getattr(B3NPCLayer, a)
+                for t, a in B3NPCLayer.CAP_MAP.items()}
+        logger.info(f'表上限已应用={caps}')
+        return caps
 
     def init_player(self):
         player_file = self.b1WorldLayer.get_config('玩家初始数据',
                                                    'data/player/default.json')
         self.player = B4PlayerLayer(load_json_to_dict(os.path.join(BASE_PATH, player_file)))
         logger.info(f'玩家载入：{self.player.player_dict.get("玩家名称name", "?")}')
+        # 位置迁移放在最后：此刻玩家与 NPC 都已就位，一次把两边都落成坐标
+        self.migrate_positions()
+
+    def new_game(self):
+        """
+        开新游戏：把**这一局跑出来的**状态整个换掉，回到刚开局的样子。
+
+        清什么：
+          · NPC 名册 —— ⚠️ 必须 `new_list()`。`init_all_npcs` 是往列表里 `add`，
+            不清就是**两局的 NPC 叠在一起**（而且名字重复，`get_npc` 只会碰到先来的那个）。
+          · 后台产出队列 —— 上一局的心跳产出与新的世界不兼容。与读档 / 撤回
+            同一条理由（`rebuild_game_state` / `restore` 也在清它）。
+          · 世界层 / 时钟 / 全局·事件·导演三个上下文 / 事件层 / 玩家 —— 由下面
+            四个 `init_*` 重建。
+
+        **不清**磁盘上的东西：`save/` 里的存档一条不动（那是上一局的成果，要删得
+        显式 `/save del`），世界数据本身也不动。
+
+        ⚠️ 这会**换掉 `self.b1WorldLayer` 这个对象**（`init_world` 新建的）。
+        引擎侧那些把世界层存进字段的层（L1/L3/R2/R4）必须跟着**重新接线**，
+        见 `GameEngine._wire()`——不重接就是"拿着上一局的世界在跑"，而且不报错。
+        """
+        self.all_npc_list.new_list()
+        self.deferred_queue.clear()
+        self.init_world()
+        self.init_clock()
+        self.init_all_npcs()
+        self.init_player()
+        logger.info(f'🆕 新游戏：{len(self.all_npc_list)} 个 NPC，'
+                    f'玩家 {self.player.player_dict.get("玩家名称name", "?")}'
+                    f' @ {self.player_location}')
 
     # ===================== 上下文小工具 =====================
 
@@ -150,7 +207,314 @@ class GameController:
 
     @property
     def player_location(self) -> str:
-        return self.player.player_dict.get('当前状态CurrentState', {}).get('当前所处位置', '')
+        """玩家所在地块的**完整路径**（由坐标解析）。"""
+        return self.b1WorldLayer.path_at(self.player_state)
+
+    @property
+    def player_state(self) -> dict:
+        return self.player.player_dict.get('当前状态CurrentState') or {}
+
+    @property
+    def player_location_desc(self) -> str:
+        """给 LLM 看的"他在哪"——**在路上的时候终于是"在路上"了**（S3）。"""
+        return self.b1WorldLayer.location_desc(self.player_state)
+
+    @property
+    def player_location_context(self) -> list:
+        """地段属性链。在路上时不再静默借用最近地块（S3）。"""
+        return self.b1WorldLayer.location_context_for(self.player_state)
+
+    # --------------------- 位置：坐标是真源，路径是派生 ---------------------
+    #
+    # 为什么还留一个 `当前所处位置`（路径）？因为引擎里有十几处读它，
+    # 而它们要的是"路径"这个形状。所以：
+    #     **唯一写入点**是下面这个 `set_position` —— 它一次写两样（坐标 + 派生路径）
+    #     于是两样不可能各自漂；`map_migration_test` 另有一条一致性断言盯着。
+    # 绝不允许别处直接写 `当前所处位置`：那正是 2026-10-08 事故的形状
+    # （L3 往真路径后面接话 → 当轮所有地段能力静默失效）。
+
+    def set_position(self, state: dict, coord=None, name: str = ''):
+        """
+        写位置：`coord` 优先（坐标），否则用 `name` 查坐标。
+
+        :return: 是否写成功。查不到坐标就**不动**（宁可原地不动，也不要一个假位置）。
+        """
+        if coord is None and name:
+            w = self.b1WorldLayer
+            nm = w.name_of(name) or name
+            # **地区（东域/中州…）没有落脚点**：它的 `坐标` 只是那个圈的圆心。
+            # 作者说"我要去东域"，落地就该是东域里**离我最近的地点**（`地图格式.md` §9.1）。
+            # 地点原样返回（`stop_in` 对非地区是 no-op）。
+            if w.is_region(nm):
+                x, y = w.coord_at(state) or (None, None)
+                stop = w.stop_in(nm, x, y)
+                if not stop:
+                    logger.warn(f'📍 去向「{nm}」是地区，而它底下**一个能停的地点都没有**'
+                                f'——原地不动（数据的问题：往里面加个地点）')
+                    return False
+                logger.info(f'📍 去向「{nm}」是地区 → 落到里面离你最近的「{stop}」')
+                nm = stop
+            coord = w.place_coord(nm)
+        if not coord:
+            return False
+        state['位置'] = [float(coord[0]), float(coord[1])]
+        state['当前所处位置'] = self.b1WorldLayer.path_at(state)     # 派生，不是真源
+        return True
+
+    def set_position_on_road(self, state: dict, road: dict, t: float,
+                             frm: str = None) -> bool:
+        """
+        把人放在**路的某一点**上（`t` 从 `frm` 那一端算起）。S3 新增，仍走
+        `set_position` 落坐标——位置的真源永远只有「坐标」一样东西。
+
+        ⚠️ `frm` 不能省：路的 `路径线` 是**从 `从` 到 `到`** 排的，而人可能正从
+        反方向走。不翻转的话，"从落霞坪往天道宗走 15%"会被算成"从天道宗往回走 15%"
+        ——**方向整个反了**，而坐标看起来还挺正常（实测踩到过）。
+
+        `t ≥ 1` 等价于"到了"（落在 `frm` 对面那一端），那时「在路上」自然变假。
+
+        ⚠️ 这是"沿路推进"的**唯一落点**。它和 `set_position` 一样只写坐标与派生路径，
+        **不写任何「行进」字段**——在哪条路哪一段由坐标 + 几何**派生**（`on_road_at`），
+        少一个字段就少一处"坐标说在 A、行进说在路上"的不一致（见 `地图格式.md` §1.2）。
+        """
+        flip = bool(frm) and frm == road.get('到')
+        if t >= 1.0:
+            return self.set_position(state, name=(road.get('从') if flip else road.get('到')))
+        pt = self.b1WorldLayer.road_point(road, (1.0 - t) if flip else t)
+        if not pt:
+            return False
+        return self.set_position(state, coord=pt)
+
+    #: `行程`（L3 的语义）→ **整段路程走到第几成** `frac ∈ (0, 1]`。
+    #:
+    #: ⚠️ 这张表是**我按中文语感猜的**，所以它的用法被限死成"安全"的：
+    #:   · 认不出 / 没给 → 一律按 `frac = 1.0`（= **老口径"去向即到达"**）处理，
+    #:     绝不让人卡在半路；
+    #:   · 每次认不出都记一条 WARNING，好让**真机跑一轮之后照模型实际吐的词**
+    #:     来定这张表，而不是照我的想象定（见 `地图实施计划.md` 的风险栏）。
+    _STAGE_FRAC = (
+        (('到了', '已到', '抵达', '到达'), 1.0),
+        (('将到', '快到', '将近', '即将', '不日'), 0.85),
+        (('半路', '过半', '途中', '中途'), 0.5),
+        (('刚上路', '上路', '出发', '启程', '动身', '刚走'), 0.15),
+    )
+
+    @classmethod
+    def travel_frac(cls, stage: str):
+        """`行程` → `frac`；**认不出返回 None**（调用方按老口径处理）。"""
+        s = (stage or '').strip()
+        if not s:
+            return None
+        for words, frac in cls._STAGE_FRAC:
+            if any(w in s for w in words):
+                return frac
+        return None
+
+    def travel_frac_by_segment(self, state: dict, dest: str, stage: str):
+        """
+        `行程` 里报的是**段名**时（"走到雪岭了"），折算成整段路程的 frac；认不出给 None。
+
+        为什么必须先有它**再铺段数据**：段名是**作者写的**，而 `_STAGE_FRAC` 只认
+        那四个进度词。认不出的退路是 `frac = 1.0` ＝ **一步到目的地**——
+        段数据铺得越多，L3 越容易照着段名说，于是**越容易瞬移**。
+
+        只认**第一跳**那条路上的段：`行程` 说的正是"我上路之后走到哪儿了"，
+        而他现在要走的下一跳就是第一跳。多跳路线上报的段名落在哪一跳，本来也无从知道——
+        与其猜，不如认不出就交给老口径（那一步由调用方决定）。
+        """
+        w = self.b1WorldLayer
+        if not stage or not dest:
+            return None
+        c = w.coord_at(state)
+        onrd = w.on_road_at(*c) if c else None
+        base = onrd['从'] if onrd else w.name_at(state)
+        if not base:
+            return None
+        hops = w.route(base, w.name_of(dest) or dest)
+        if len(hops) < 2:
+            return None
+        legs = len(hops) - 1
+        road = w.road_between(hops[0], hops[1])
+        for name, t0, t1 in (w.segment_ranges(road) if road else []):
+            if not name:
+                continue
+            hit = name in stage
+            if not hit:
+                # 作者爱把段名叫成「雪岭段」，而 L3 往往只说「雪岭」——
+                # 去掉尾缀再试一次，否则这种最常见的说法反而认不出。
+                for suf in ('段', '一带', '之地', '区'):
+                    if (name.endswith(suf) and len(name) > len(suf) + 1
+                            and name[:-len(suf)] in stage):
+                        hit = True
+                        break
+            if hit:
+                return (t0 + t1) / 2 / legs      # 该段的中点，折算到整段路程
+        return None
+
+    def advance_travel(self, state: dict, dest: str, frac: float, why: str = '') -> bool:
+        """
+        朝 `dest` 走，走到**整段路程的 `frac` 处**。
+
+        为什么是"整段路程的第几成"而不是"当前这一跳的第几成"：
+        一跳一跳来的话，去一个五跳之外的地方要玩家打五轮字。按整段算，
+        `frac=0.5` 就是"走到一半"——中途那几跳**照样会显示"在路上"**，
+        因为它落在某一条路上而不是某个地块里。
+
+        落点永远**在某条路的路径线上**（`set_position_on_road`）——所以
+        "在路上"由坐标 + 几何**派生**，不另存字段。
+
+        `frac` 从哪算起：还在路上就用那条路的**起点**当基准（不是"最近地块"——
+        最近地块会随着 t 越过中点而换边，于是反复说"半路"会在中点来回摆）。
+        """
+        w = self.b1WorldLayer
+        if not dest:
+            return False
+        dest_name = w.name_of(dest) or dest
+        c = w.coord_at(state)
+        onrd = w.on_road_at(*c) if c else None
+        base = onrd['从'] if onrd else w.name_at(state)
+        if not base:
+            return False
+        if dest_name == base:
+            return False
+        hops = w.route(base, dest_name)
+        if not hops:
+            # **目标是真存在的地点，却一条路都不通**（数据漏了——手写一张新地图时
+            # 忘连一条路太正常了）。这里**不硬失败**：直接落点 + WARNING。
+            #
+            # 为什么不让玩家"走不动"：那是个死胡同。他想去的地方在世界里明明存在，
+            # 卡住只会让人以为游戏坏了。**数据的问题要看得见**（WARNING），
+            # 但不该表现为"玩家动不了"。
+            if dest_name not in w.place_paths():
+                return False          # 根本不是已知地点：不动（老口径，不编假位置）
+            ok = self.set_position(state, name=dest_name)
+            if ok:
+                logger.warn(f'🚶 去向「{dest_name}」**一条路都没有**（{base} 通不到它）'
+                            f'——先按"到了"落点。这是**地图数据的漏**，补一条路就好了')
+            return ok
+        if len(hops) < 2:
+            return False
+
+        legs = len(hops) - 1
+        if frac >= 1.0:
+            # 到了：直接落目的地（与老口径完全一致——所以"没给行程"不会退化）
+            ok = self.set_position(state, name=dest_name)
+            if ok:
+                logger.info(f'🚶 行进：{base} → {dest_name}（到了'
+                            f'{("，" + why) if why else ""}，共 {legs} 跳）')
+            return ok
+
+        pos = frac * legs
+        k = min(int(pos), legs - 1)
+        t = pos - k
+        road = w.road_between(hops[k], hops[k + 1])
+        if not road:
+            return False
+        ok = self.set_position_on_road(state, road, t, frm=hops[k])
+        if ok:
+            logger.info(f'🚶 行进：{base} → {dest_name} 走到 {int(frac * 100)}%'
+                        f'（第 {k + 1}/{legs} 跳：{hops[k]} → {hops[k + 1]}，t={round(t, 2)}'
+                        f'{("，" + why) if why else ""}）')
+        return ok
+
+    def reload_world(self) -> dict:
+        """
+        把 `世界.map` 重新读进来，盖到**活着的**世界字典上（编辑器保存后用）。
+
+        刻意**只**盖 `.map` 拥有的那几把键（见 `map_io.apply_map`）。整份重读 JSON
+        是不行的——`世界状态列表` 是**运行期在长的**（L3 每轮可能追加新状态），
+        重读会把它抹回开局，而那种丢失事后根本查不出来。
+
+        几何早就算好的派生缓存（`_depths` / `_paths` / `_name_by_path`）必须清掉：
+        不清就是"地图改了，世界还记得旧路"。
+
+        ⚠️ 调用方要保证**当前没有回合在跑**（`web/server.py` 的保存接口挡了这条）。
+
+        :return: **按"改完什么时候生效"分三类**。以前只回一句"已重载"，那是把三种
+                 情况说成了一种——用户会以为改了 NPC 上限就生效，然后奇怪它为什么没变。
+        """
+        from common import map_io
+        map_path = os.path.join(BASE_PATH, WORLD_MAP_FILE)
+        fresh = map_io.load_world_map(map_path)
+        d = self.b1WorldLayer.dict
+        before = len(d.get('世界状态列表') or [])
+        # `游戏开始时间` / `时间格式` 是顶层键，**不在 `世界配置` 里**——
+        # 只比 `世界配置` 的话，改了开局时刻会被算成"没有变动"，于是界面上
+        # 一个字都不提，而玩家下一轮发现时间倒着走了。所以两处一起比。
+        watch_before = {k: d.get(k) for k in ('游戏开始时间', '时间格式')}
+        watch_before.update({f'配置:{k}': v
+                             for k, v in (d.get('世界配置') or {}).items()})
+        for k in ('世界地点列表', '世界配置', '路列表', '地图几何'):
+            if fresh.get(k) is not None:
+                d[k] = fresh[k]
+        for k in ('游戏开始时间', '时间格式'):
+            if fresh.get(k) is not None:
+                d[k] = fresh[k]
+        # 派生缓存全清：不清就是"地图改了，世界还记得旧路"。
+        # `_adj`（邻接表）与 `_roadtbl`（路的采样表）是 S3 加的，同样只取决于几何；
+        # `_attrsn`（按名字取属性，`类型` 从那儿读）是"区域/地点分家"加的——
+        # 不清的话改了 `类型` 之后，世界还按旧的"谁是区域"来判。
+        for cache in ('_depths', '_paths', '_name_by_path', '_adj', '_roadtbl',
+                      '_leaves', '_attrsn'):
+            if hasattr(self.b1WorldLayer, cache):
+                delattr(self.b1WorldLayer, cache)
+
+        # 上限是**类属性**，盖字典不会自己生效——必须重跑覆写
+        self.apply_config_caps()
+        self.migrate_positions()
+
+        after = len(d.get('世界状态列表') or [])
+        watch_now = {k: d.get(k) for k in ('游戏开始时间', '时间格式')}
+        watch_now.update({f'配置:{k}': v
+                          for k, v in (d.get('世界配置') or {}).items()})
+        changed = sorted(k for k in set(watch_before) | set(watch_now)
+                         if watch_before.get(k) != watch_now.get(k))
+        logger.info(f'世界地图已重载：{len(fresh.get("世界地点列表") or {})} 个根地块'
+                    f'｜世界状态 {before} → {after} 条｜变动 {changed}')
+
+        # 「游戏开始时间 / 时间格式」改了不算立即生效：时钟对象开局就建好了。
+        # 「玩家初始数据」要下一次开局才读。「生命值体系」由 L3 每轮现读，算立即生效。
+        deferred = [k for k in changed
+                    if k in ('玩家初始数据', '游戏开始时间', '时间格式')]
+        now = [f'地点 {len(fresh.get("世界地点列表") or {})} 根',
+               f'路 {len(fresh.get("路列表") or [])} 条',
+               '几何']
+        for k in changed:
+            if k in deferred:
+                continue
+            kk = k.split(':', 1)[-1]
+            # 上限是"类属性能改、已经长出来的不会缩回去"——说清楚，别让人以为
+            # 改小了就立刻把记忆截掉
+            now.append(f'配置 {kk}' + ('（只影响之后新长的数据）'
+                                       if kk.startswith('NPC_上限_') else ''))
+        return {
+            '立即生效': now,
+            '需重启': deferred,
+            '世界状态条数': [before, after],
+        }
+
+    def migrate_positions(self):
+        """
+        把旧档/旧数据里的 `当前所处位置`（路径字符串）迁移成坐标。
+
+        读档与 init 都过一遍——**幂等**：已经有 `位置` 就只刷新派生路径。
+        """
+        moved, stuck = 0, []
+        targets = [(self.player.player_dict.get('当前状态CurrentState') or {}, '玩家')]
+        for n in (self.all_npc_list.npc_list if self.all_npc_list else []):
+            targets.append((n.current_state or {}, n.name))
+        for st, who in targets:
+            if self.set_position(st, coord=self.b1WorldLayer.coord_at(st)):
+                moved += 1
+                continue
+            raw = (st.get('当前所处位置') or '').strip()
+            if self.set_position(st, name=raw):
+                moved += 1
+            else:
+                stuck.append(f'{who}:{raw or "(空)"}')
+        if stuck:
+            logger.warn(f'位置迁移：{len(stuck)} 个实体的位置解析不出，保持原样：{stuck[:5]}')
+        logger.info(f'位置迁移完成：{moved} 个实体已落到坐标')
 
     def apply_player_delta(self, delta: dict):
         """应用增量到玩家字典（原地，deepcopy 保护）"""
@@ -202,6 +566,32 @@ class GameController:
         而不是靠各处自律。
         """
         self.apply_player_delta(l3_result.get('玩家实例') or {})
+
+        # 玩家的**去向**：L3 只给地名（语义），落坐标是这里的活。
+        # 这是位置唯一的写入通道（L3 的 `位置`/`当前所处位置` 白名单外，写了也会被丢）。
+        dest = (l3_result.get('去向') or '').strip()
+        if dest:
+            st = self.player.player_dict.get('当前状态CurrentState') or {}
+            stage = (l3_result.get('行程') or '').strip()
+            frac = self.travel_frac(stage)
+            if frac is None and stage:
+                # 词表认不出，再试**段名**（"走到雪岭了"）——段名是作者写的，
+                # 而 L3 现在看得到"正在穿过哪一段"，照着它说的机会不小。
+                frac = self.travel_frac_by_segment(st, dest, stage)
+            if frac is None:
+                if stage:
+                    # 认得出就用，认不出**退回老口径**（当"到了"）——
+                    # 卡在半路比多走一步糟得多。这句 WARNING 就是那张表的待办事项。
+                    logger.warn(f'🚶 行程「{stage}」认不出，按"到了"处理'
+                                f'（不会把人卡在半路）。真跑过之后照着模型'
+                                f'实际吐的词来定 `_STAGE_FRAC` / 段名')
+                frac = 1.0
+            if self.advance_travel(st, dest, frac, why=stage):
+                self.player.player_dict['当前状态CurrentState'] = st
+                logger.info(f'🧭 玩家去向：{dest} → {st.get("当前所处位置")}')
+            else:
+                logger.warn(f'🧭 去向「{dest}」走不通（不是已知地点 / 没有连通的路），'
+                            f'位置不动——这比编一个假位置强')
 
         npc_map = l3_result.get('NPC实例') or {}
         for name, delta in npc_map.items():

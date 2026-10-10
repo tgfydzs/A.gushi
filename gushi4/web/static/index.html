@@ -15,15 +15,23 @@
   <div class="headline">
     <span id="hName" class="hname">…</span>
     <span class="sep">·</span>
-    <span id="hLoc" class="hloc" title="点击展开地点树">…</span>
+    <span id="hLoc" class="hloc" title="当前位置（在地图面板上点地块可前往）">…</span>
   </div>
 
   <div class="spacer"></div>
 
   <div id="hClock" class="clock">…</div>
   <div id="hRound" class="round">第 0 轮</div>
+  <!-- 构建号：**调试期专用**，一眼看出页面上跑的是哪一版 JS。
+       为什么需要它：改了前端之后，"重开服务""重开页面"都不一定能拿到新代码
+       （服务重启只让 SSE 重连；页面重开可能命中缓存），于是"改了没生效"
+       会被误当成"没修好"。有了它，双方看的是同一个事实。 -->
+  <span id="hBuild" class="build" title="前端构建号（刷新后应变）">…</span>
 
   <div class="actions">
+    <button id="btnSaves" class="btn" title="存档 / 读档 / 快速存取">存档</button>
+    <button id="btnNewGame" class="btn" title="回到开局（磁盘上的存档不动）">新游戏</button>
+    <button id="btnReload" class="btn" title="把 世界.map 重新读进来（编辑器保存时会自动做）">重载世界</button>
     <button id="btnPanels" class="btn" title="选择显示哪些面板">面板</button>
     <button id="btnPresetPlay" class="btn" title="只留游玩需要的">游玩</button>
     <button id="btnPresetDev" class="btn" title="全部打开">开发</button>
@@ -66,23 +74,11 @@
     </div>
   </section>
 
-  <aside id="railRight" class="rail"></aside>
+  <aside id="railRight" class="rail">
+    <div id="railGrip" title="拖动调整右栏宽度（双击复位）"></div>
+  </aside>
 
 </main>
-
-<!-- ══════════ 地点选择浮层（移动标记用） ══════════ -->
-<div id="moveModal" class="modal hidden">
-  <div class="modal-box">
-    <div class="modal-head">
-      <strong>选择目标位置</strong>
-      <button id="moveCancel" class="btn btn-sm">取消</button>
-    </div>
-    <div class="modal-tools">
-      <input id="moveFilter" placeholder="过滤…" autocomplete="off">
-    </div>
-    <div id="moveTree" class="modal-body"></div>
-  </div>
-</div>
 
 <script src="/static/app.js"></script>
 </body>

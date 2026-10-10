@@ -10,7 +10,7 @@ gushi4 后台与记忆巩固干跑 —— **不发起真实 API 调用**。
   - 记忆巩固是"压成摘要"而不是"直接丢弃"
 
 跑法：
-    cd E:/A.gushi/gushi4 && python src/test/background_test.py
+    cd <项目根> && python src/test/background_test.py
 """
 
 import os

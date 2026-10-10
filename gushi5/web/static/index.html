@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gushi5</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ══════════ 顶栏：一直可见的几个数 ══════════ -->
+<header id="topbar">
+  <div class="brand">gushi<span>5</span></div>
+
+  <div class="headline">
+    <span id="hName" class="hname">…</span>
+    <span class="sep">·</span>
+    <span id="hLoc" class="hloc" title="当前位置（在地图面板上点地块可前往）">…</span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div id="hClock" class="clock">…</div>
+  <div id="hRound" class="round">第 0 轮</div>
+  <!-- 构建号：**调试期专用**，一眼看出页面上跑的是哪一版 JS。
+       为什么需要它：改了前端之后，"重开服务""重开页面"都不一定能拿到新代码
+       （服务重启只让 SSE 重连；页面重开可能命中缓存），于是"改了没生效"
+       会被误当成"没修好"。有了它，双方看的是同一个事实。 -->
+  <span id="hBuild" class="build" title="前端构建号（刷新后应变）">…</span>
+
+  <div class="actions">
+    <button id="btnSaves" class="btn" title="存档 / 读档 / 快速存取">存档</button>
+    <button id="btnNewGame" class="btn" title="回到开局（磁盘上的存档不动）">新游戏</button>
+    <button id="btnReload" class="btn" title="把 世界.map 重新读进来（编辑器保存时会自动做）">重载世界</button>
+    <button id="btnPanels" class="btn" title="选择显示哪些面板">面板</button>
+    <button id="btnPresetPlay" class="btn" title="只留游玩需要的">游玩</button>
+    <button id="btnPresetDev" class="btn" title="全部打开">开发</button>
+    <button id="btnUndo" class="btn" title="撤回上一条（!!）">撤回</button>
+  </div>
+</header>
+
+<!-- ══════════ 面板抽屉：勾选要显示什么 ══════════ -->
+<div id="panelDrawer" class="drawer hidden">
+  <div class="drawer-head">
+    <strong>面板</strong>
+    <span class="hint">勾选即显示，自动记住</span>
+    <button id="drawerClose" class="btn btn-sm">关闭</button>
+  </div>
+  <div id="panelList" class="drawer-list"></div>
+</div>
+
+<!-- ══════════ 三栏主体 ══════════ -->
+<main id="layout">
+
+  <aside id="railLeft" class="rail"></aside>
+
+  <section id="center">
+    <!-- 阶段进度：一轮 7 秒里"还在动"的唯一凭据 -->
+    <div id="progress" class="progress hidden">
+      <div class="prog-row">
+        <span class="spinner"></span>
+        <span id="progName">…</span>
+        <span id="progSecs" class="prog-secs"></span>
+        <span id="progDetail" class="prog-detail"></span>
+      </div>
+      <div class="prog-steps" id="progSteps"></div>
+    </div>
+
+    <div id="stream" class="stream"></div>
+
+    <div id="composer" class="composer">
+      <textarea id="input" rows="2" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <button id="btnSend" class="btn btn-send">发送</button>
+    </div>
+  </section>
+
+  <aside id="railRight" class="rail">
+    <div id="railGrip" title="拖动调整右栏宽度（双击复位）"></div>
+  </aside>
+
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -15,7 +15,7 @@
 开推理值不值？这个脚本会打出两组的耗时，直接对照关键路径的代价。
 
 跑法：
-    cd E:/A.gushi/gushi4 && python src/test/diag_l1_thinking.py [次数，默认 5]
+    cd <项目根> && python src/test/diag_l1_thinking.py [次数，默认 5]
 """
 
 import collections
