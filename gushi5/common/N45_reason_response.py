@@ -18,7 +18,7 @@ import json
 
 from Schema.B3_1_npc_sch import B3NPCLayer
 from common.log import get_logger
-from common.small_tool import load_prompt, apply_npc_delta, safe_json_loads
+from common.small_tool import load_prompt, apply_npc_delta, safe_json_loads, take_npc_delta
 from common.base_cnf import *
 from common.LLMclient import LLMClient
 
@@ -67,7 +67,7 @@ class N45_ReasonResponse:
         json_replay = safe_json_loads(reply, label='N45')
 
         # ---- 推理部分：只取待解释事件增量，越权字段直接丢弃 ----
-        npc_delta = self._sanitize_npc_delta(json_replay.get('npc实例', {}))
+        npc_delta = self._sanitize_npc_delta(take_npc_delta(json_replay, 'N45'))
         new_npc_inst = apply_npc_delta(npc_inst, npc_delta)
 
         # ---- 回应部分 ----

@@ -4,7 +4,7 @@ from Schema.B3_1_npc_sch import B3NPCLayer
 from Schema.B4_player_sch import B4PlayerLayer
 from common.log import get_logger
 from common.small_tool import (load_prompt, apply_npc_delta, apply_player_delta,
-                               strip_position_keys, safe_json_loads)
+                               strip_position_keys, safe_json_loads, take_npc_delta)
 from common.base_cnf import *
 from common.LLMclient import LLMClient
 
@@ -34,8 +34,8 @@ class N6_Update:
         self.world_rules: list = []
 
     def _check_output_shape(self, payload: dict, label: str,
-                            required=('npc实例', '玩家实例', '旁白', '本轮耗时分钟'),
-                            container='npc实例'):
+                            required=('npc增加', 'npc删减', '玩家实例', '旁白', '本轮耗时分钟'),
+                            container=None):
         """
         解析成功**不代表结构对**。实测过一种半成功：模型把 `删减` 提到了根层，
         根对象提前闭合，`玩家实例 / 旁白 / 本轮耗时分钟` 全成了"尾随数据"——
@@ -136,7 +136,7 @@ class N6_Update:
         json_replay = safe_json_loads(reply, label='N6')
         self._check_output_shape(json_replay, 'N6')
 
-        npc_delta = json_replay.get('npc实例', {})
+        npc_delta = take_npc_delta(json_replay, 'N6')
         player_delta = json_replay.get('玩家实例', {})
         world_delta = json_replay.get('世界状态', {}) or {}
         # 任务通道是**回复级**的（与 npc实例 并列），不是 NPC 的某张表。

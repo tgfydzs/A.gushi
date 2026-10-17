@@ -200,6 +200,46 @@ def _coerce_value(field: str, existing, value, report: dict):
     return value
 
 
+def take_npc_delta(payload: dict, label: str = '') -> dict:
+    """
+    从 LLM 回复里取 **NPC 增量**，返回统一的 `{'增加': {...}, '删减': {...}}`。
+
+    为什么要这个函数：`npc实例:{增加,删减}` 是**三层嵌套**，模型写到长列表末尾时
+    常把 `删减` 提到根层、并多闭合一层括号（实测一个日志里 7 次），于是
+    `玩家实例 / 旁白 / 耗时` 全掉成"尾随数据"。现在契约拍平成两个顶层字段：
+
+        新：`{"npc增加": {...}, "npc删减": {...}, "玩家实例": ...}`
+        旧：`{"npc实例": {"增加": {...}, "删减": {...}}, ...}`（兼容，打 WARN）
+
+    这样"删减写错层"这个错误类别在结构上不存在了——它和 `玩家实例` 是平级的。
+    三种形态都收敛到同一结果，**畸形形态必须可见**（WARN），不静默吃掉。
+    """
+    payload = payload or {}
+    inc = payload.get('npc增加')
+    dec = payload.get('npc删减')
+    if isinstance(inc, dict) or isinstance(dec, dict):
+        return {'增加': dict(inc or {}), '删减': dict(dec or {})}
+
+    legacy = payload.get('npc实例')
+    if isinstance(legacy, dict) and (legacy.get('增加') or legacy.get('删减')
+                                     or '增加' in legacy or '删减' in legacy):
+        if label:
+            logger.warn(f'{label} 仍在用旧形状 `npc实例:{{增加,删减}}`——'
+                        f'请改用顶层的 `npc增加` / `npc删减`')
+        return {'增加': dict(legacy.get('增加') or {}), '删减': dict(legacy.get('删减') or {})}
+
+    # 模型把 增加/删减 提到了**根层**（最常见的畸形）：合并回来，但要说出来
+    inc = payload.get('增加')
+    dec = payload.get('删减')
+    if isinstance(inc, dict) or isinstance(dec, dict):
+        if label:
+            logger.warn(f'{label} `增加/删减` 写在了根层（应在 `npc增加`/`npc删减`）——'
+                        f'已按 NPC 增量收下，请修正输出形状')
+        return {'增加': dict(inc or {}), '删减': dict(dec or {})}
+
+    return {'增加': {}, '删减': {}}
+
+
 def _delta_add(base: dict, field: str, value, report: dict = None):
     """增加操作"""
     if field not in base:
