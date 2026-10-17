@@ -7,9 +7,14 @@
 3. 规则过滤+关联分组+N9c并行（每组一次）
 4. 全部产出推入 DeferredQueue
 
-触发条件：
-- 主循环每完成3轮
-- 游戏时间累计推进 ≥ 12小时
+触发条件（满足任一）：
+- 游戏时间累计推进 ≥ `心跳间隔_小时`（默认 12 小时；来源 `world_layer` 配置）
+- 连续 ≥ `心跳_最少轮次`（默认 8）轮没触发过
+
+⚠️ **轮次兜底不能省**：只有时间条件时，只要时间推进得慢（时辰制下正常对话一轮
+才 2~5 分钟），后台就永远等不到 12 小时。实测一整档 93 轮游戏时间只走了 213 分钟，
+`⏰ 心跳#` 一条都没出现——N9a/N9b/N9c 三路**一次都没跑过**，世界不会自己演进。
+这条兜底原本就写在模块说明里（"主循环每完成3轮"），但代码里从来没实现过。
 """
 
 import json
@@ -33,26 +38,22 @@ class HeartbeatManager:
         hb = HeartbeatManager(deferred_queue, n9_director)
         hb.try_trigger(round_count, game_clock, ...)
 
-    关键词可配置：
-        hb.state_region_kw = [...]
-        hb.region_keywords = {...}
+    关键词**不写死**：区域名与"区域→地点关键词"在首次触发时从地图派生
+        （见 `_ensure_regions`）。确实需要覆盖时才显式传：
+        hb = HeartbeatManager(q, n9, state_region_kw=[...], region_keywords={...})
     """
 
     TIME_INTERVAL_HOURS = 12
 
-    # 默认区域关键词（不同世界观有不同的地点名）
-    DEFAULT_STATE_REGION_KW = [
-        '东域', '西域', '南域', '北域', '中州',
-        '天道宗', '万魔殿', '散修联盟', '星辰阁',
-        '落霞坪', '青木山脉', '十万大山', '极寒冰原',
-    ]
-    DEFAULT_REGION_KEYWORDS = {
-        '东域': ['东域', '天道宗', '星辰阁', '落霞坪', '青木山脉', '灵虚集'],
-        '西域': ['西域', '万魔殿', '西漠', '魔渊'],
-        '南域': ['南域', '十万大山', '散修联盟', '云梦国'],
-        '北域': ['北域', '极寒冰原', '寒泉集'],
-        '中州': ['中州', '天衡台', '万象洞天'],
-    }
+    #: 轮次兜底：连续这么多轮没触发过心跳就强制一次。
+    #: 没有它，时间推进慢的世界（时辰制下每轮才几分钟）后台永远跑不起来。
+    ROUND_FALLBACK = 8
+
+    # ⚠️ 这里原来有两张写死的表：`DEFAULT_STATE_REGION_KW`（东域/天道宗/落霞坪…）和
+    # `DEFAULT_REGION_KEYWORDS`（东域→[天道宗, 星辰阁…]）。那是**把这个世界当成引擎常识**：
+    # 换个世界，`_filter_candidates` 一个区域都匹配不上（N9c 的"区域相关"理由全失效），
+    # `_group_by_region` 会把所有 NPC 倒进"其他"一个桶。
+    # 现在区域名与关键词**全部从地图派生**（见 `_ensure_regions`）：地图本来就是地理的真源。
 
     def __init__(self, deferred_queue: DeferredQueue, n9_director, logger=None,
                  state_region_kw=None, region_keywords=None):
@@ -62,32 +63,92 @@ class HeartbeatManager:
         self.cli = LLMClient('N9c')
 
         self._last_trigger_elapsed_minutes = 0
+        self._last_trigger_round = 0
         self._heartbeat_count = 0
         self._npc_last_hb: dict[str, int] = {}
 
-        # 可配置的区域关键词（不同世界观有不同的地点名）
-        self.state_region_kw = state_region_kw or list(self.DEFAULT_STATE_REGION_KW)
-        self.region_keywords = region_keywords or dict(self.DEFAULT_REGION_KEYWORDS)
+        # 区域名与关键词。显式给了就用给的，否则首次触发时从地图派生一次。
+        self.state_region_kw = list(state_region_kw or [])
+        self.region_keywords = dict(region_keywords or {})
+        self._regions_ready = bool(self.state_region_kw and self.region_keywords)
+
+    # ===================== 区域信息（从地图派生，不写死） =====================
+
+    def _ensure_regions(self, world_layer):
+        """
+        区域名 / 区域→地点关键词 从**地图**派生一次。
+
+        规则不含世界观知识：
+          · 区域 = `is_region()` 为真、且**路径层数最小**的那些节点（= 一级区域，如东域）
+          · 关键词 = 该区域子树里的全部地块名
+        派生不出来（世界没有区域概念）→ 只告警一次，之后所有 NPC 归到"其他"。
+        """
+        if getattr(self, '_regions_ready', False) or world_layer is None:
+            return
+        self._regions_ready = True
+        try:
+            paths = world_layer.place_paths() or {}
+            regions = {n: p for n, p in paths.items() if world_layer.is_region(n)}
+            # 排除最外层（大陆/世界根）——它的路径层数最小
+            if regions:
+                min_depth = min(len(str(p).split('·')) for p in regions.values())
+                tops = {n: p for n, p in regions.items()
+                        if len(str(p).split('·')) == min_depth + 1}
+                for name, path in tops.items():
+                    self.state_region_kw.append(name)
+                    self.region_keywords[name] = [
+                        n for n, p in paths.items()
+                        if p == path or str(p).startswith(str(path) + '·')]
+        except Exception as e:
+            self.logger.warn(f'区域信息派生失败：{type(e).__name__}: {e}')
+
+        if self.state_region_kw:
+            self.logger.info(f'🗺 区域信息来自地图：{len(self.state_region_kw)} 个区域'
+                             f'（{"、".join(self.state_region_kw[:6])}）')
+        else:
+            # 不静默：没有区域概念的世界，N9c 只能把所有人当一个桶
+            self.logger.warn('地图里没有"区域"层，N9c 将把所有 NPC 归到同一组'
+                             '（世界配置可用 state_region_kw / region_keywords 显式给出）')
 
     # ===================== 主入口 =====================
 
     def try_trigger(self, game_clock, world_layer, all_npc_list,
                     director_context: list, world_state_list: list,
                     event_context: list, npc_responses: list,
-                    player_input: str, player_inst, n7_result: dict = None) -> bool:
+                    player_input: str, player_inst, n7_result: dict = None,
+                    round_no: int = 0) -> bool:
         """检查触发条件，满足则触发一轮心跳。"""
+        # 区域信息第一次触发时从地图派生（不在构造期，因为构造期还没有世界层）
+        self._ensure_regions(world_layer)
         elapsed = getattr(game_clock, '_elapsed', 0)
         reason = None
 
+        # 条件一：游戏时间推进够了
         # 从世界配置读取心跳间隔，默认12小时
         interval_hours = world_layer.get_config('心跳间隔_小时', self.TIME_INTERVAL_HOURS) if world_layer else self.TIME_INTERVAL_HOURS
+        try:
+            interval_hours = float(interval_hours)
+        except (TypeError, ValueError):
+            interval_hours = self.TIME_INTERVAL_HOURS
         if elapsed - self._last_trigger_elapsed_minutes >= interval_hours * 60:
-            reason = f'游戏时间推进≥{self.TIME_INTERVAL_HOURS}小时'
+            reason = f'游戏时间推进≥{interval_hours:g}小时'
+
+        # 条件二：轮次兜底（时间推得慢的世界靠这条，否则后台永远不跑）
+        if reason is None and round_no:
+            fallback = world_layer.get_config('心跳_最少轮次', self.ROUND_FALLBACK) if world_layer else self.ROUND_FALLBACK
+            try:
+                fallback = int(fallback)
+            except (TypeError, ValueError):
+                fallback = self.ROUND_FALLBACK
+            gap = round_no - self._last_trigger_round
+            if fallback > 0 and gap >= fallback:
+                reason = f'连续 {gap} 轮没触发过（时间只推进了 {elapsed - self._last_trigger_elapsed_minutes} 分钟）'
 
         if reason is None:
             return False
 
         self._last_trigger_elapsed_minutes = elapsed
+        self._last_trigger_round = round_no
         self._heartbeat_count += 1
         self.logger.info(f'⏰ 心跳#{self._heartbeat_count}：{reason}')
 
@@ -120,6 +181,9 @@ class HeartbeatManager:
             all_npc_names = [n.name for n in (all_npc_list.npc_list if hasattr(all_npc_list, 'npc_list') else all_npc_list)]
             time_str = game_clock.now_str() if game_clock else '?'
             world_rules = world_layer.dict.get('世界演变规则列表', []) if world_layer else []
+            # `世界知识列表` 是**秘辛**（上古大战真相、谁掌握谁的档案…）：只给后台导演，
+            # 绝不喂 NPC 层，否则就是信息泄漏（见 AGENTS.md §二）。
+            world_knowledge = world_layer.dict.get('世界知识列表', []) if world_layer else []
 
             # ---- ① NPC规则过滤 + 关联分组 ----
             candidates = self._filter_candidates(all_npc_list, world_state_list, n7_result)
@@ -138,6 +202,7 @@ class HeartbeatManager:
                     self.n9.run_rules,
                     world_rules, world_state_list, event_summary,
                     dc_trimmed, time_str, player_name, player_loc, player_power,
+                    world_knowledge,
                 )
                 futures[fut] = ('N9a', None)
 

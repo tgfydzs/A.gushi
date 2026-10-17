@@ -639,14 +639,9 @@ _RADII = (0.0, 340.0, 130.0, 70.0, 40.0, 26.0)
 _LEAF_R = 16.0        #: 叶地块的半径
 _MARGIN = 18.0        #: 枝地块的范围在子节点之外再留这么多
 
-#: 域名的方位偏置。屏幕坐标 y 向下，所以"北"是负角
-_COMPASS = {
-    '东域': 0.0,
-    '南域': math.pi / 2,
-    '西域': math.pi,
-    '北域': -math.pi / 2,
-    '中州': -math.pi / 4,
-}
+#: 一级区域在画布上的方位**不再写死**：这里曾经有一张 `{'东域': 0, '南域': π/2, ...}`
+#: 的表，是把这个世界的区域名当成了引擎常识。现在按子节点顺序**均分**整圈
+#: （见下方 `spin + 2πi/n`）——任何世界都能画，只是画出来的方位不一定符合"东在东"。
 
 
 def auto_layout(tree: dict, roads: list = None) -> dict:
@@ -692,8 +687,7 @@ def auto_layout(tree: dict, roads: list = None) -> dict:
         n = len(kids)
         reach = 0.0
         for i, k in enumerate(kids):
-            ang = (_COMPASS[k] if (depth == 0 and k in _COMPASS)
-                   else spin + 2 * math.pi * i / n)
+            ang = spin + 2 * math.pi * i / n
             nx, ny = cx + r * math.cos(ang), cy + r * math.sin(ang)
             cr = place(k, nx, ny, depth + 1, ang + math.pi / n)
             reach = max(reach, math.hypot(nx - cx, ny - cy) + cr)

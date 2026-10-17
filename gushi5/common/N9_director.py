@@ -32,10 +32,12 @@ class N9_Director:
     # ===================== 仅供后台 heartbeat 调用 =====================
 
     def run_rules(self, world_rules, world_state_list, event_summary,
-                  dc_trimmed, time_str, player_name, player_loc, player_power) -> dict:
+                  dc_trimmed, time_str, player_name, player_loc, player_power,
+                  world_knowledge=None) -> dict:
         """N9a：规则触发，返回原始LLM结果（触发节奏由心跳时间间隔控制）"""
         return self._process_rules(world_rules, world_state_list, event_summary,
-                                   dc_trimmed, time_str, player_name, player_loc, player_power)
+                                   dc_trimmed, time_str, player_name, player_loc, player_power,
+                                   world_knowledge)
 
     def run_narration(self, player_loc, time_str, world_state_list, event_summary) -> list:
         """N9b：环境叙事，返回原始LLM结果"""
@@ -44,7 +46,8 @@ class N9_Director:
     # ===================== N9a =====================
 
     def _process_rules(self, world_rules, world_state_list, event_summary,
-                       dc_trimmed, time_str, player_name, player_loc, player_power) -> dict:
+                       dc_trimmed, time_str, player_name, player_loc, player_power,
+                       world_knowledge=None) -> dict:
         sys_prompt = self._load_prompt('N9a_rule_sys.txt')
         user_input = {
             '世界演变规则列表': world_rules,
@@ -55,6 +58,9 @@ class N9_Director:
             '最近事件摘要': event_summary,
             '导演历史（幕后情报参考）': dc_trimmed,
         }
+        if world_knowledge:
+            # 秘辛（上古真相、谁握着谁的档案…）：**只在这层出现**，NPC 层永远看不到。
+            user_input['世界知识（鲜有人知的底细）'] = list(world_knowledge)
         return self._llm_call(sys_prompt, user_input, self.TEMPERATURE_RULE, 'N9a')
 
     def _process_narration(self, player_loc, time_str, world_state_list, event_summary) -> dict:

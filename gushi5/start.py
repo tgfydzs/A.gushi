@@ -31,8 +31,16 @@ import webbrowser
 DEFAULT_PORT = 8765
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
-#: 离线套件。它们**不调 API**，所以可以随便跑。
-OFFLINE_SUITES = ('src/test/map_edit_test.py', 'src/test/map_migration_test.py')
+#: 离线套件。前两个**完全不调 API**；后三个要构造 GameController（会建 LLMClient、
+#: 读 base_cnf 里的 API_KEY），所以它们自己带护栏：没 key 就打一行 SKIP 并 exit 0。
+OFFLINE_SUITES = (
+    'src/test/map_edit_test.py',
+    'src/test/map_migration_test.py',
+    'src/test/clock_calendar_test.py',      # 时辰制真日历 / 中文数字换算 / 旧档兼容
+    'src/test/time_skip_test.py',           # 时间跳过换算 / N8 取 max / 大跳后结清在途 / 心跳兜底
+    'src/test/task_store_test.py',          # 任务表状态机 / 期限逾期 / 预设触发 / 通道兼容 / 存档往返
+    'src/test/place_resolve_test.py',       # 地名解析：精确/全路径/末段/段/子串，歧义与编造一律拒绝
+)
 
 _KEY_HINT = (
     '  API key 没设。本机它是机器级环境变量，App 进程可能继承不到，从注册表取：\n'

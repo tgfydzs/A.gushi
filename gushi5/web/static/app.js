@@ -723,7 +723,7 @@ const MAP_ROADHIT_PX = 13.0;
 // 构建号：**调试期专用**，一眼看出页面上跑的是哪一版 JS。
 // gushi5 的前端是从 gushi4 搬来的（同一份契约：`/api/*` + SSE 事件），
 // 所以这里换了前缀，方便和 gushi4 的 `10xx-xxxx` 区分开。
-const BUILD = 'g5-0001';
+const BUILD = 'g5-0003';
 function showBuild() {
   const el = document.getElementById('hBuild');
   if (el) el.textContent = 'build ' + BUILD;
@@ -1111,7 +1111,11 @@ async function saveAction(how, name) {
     await refreshSaves();
     return;
   }
-  await Promise.all([refreshState(), loadHistory()]);
+  await Promise.all([refreshState(), loadHistory(), reloadNpcPanels()]);
+  // 读档也会**把世界整个换掉**：地图上的地块、玩家与 NPC 的位置全是另一份状态。
+  // 以前这条路径没重画地图，于是读档后地图还停在上一个存档的位置——人看起来"位置不对"。
+  // 静态层也重建：读的可能是另一个世界，几何不一定相同。
+  await loadMap({ static: true });
   await refreshSaves();
 }
 
@@ -1310,6 +1314,10 @@ function connectSSE() {
       setBusy(false);
       showProgress(false);
       refreshSoon(0);
+      // NPC 面板/列表也要跟着走：以前这里只刷了玩家与地图，右侧面板要**手动点一下**
+      // 才更新，于是"这一轮他的心情/关系变了"在界面上永远看不到。
+      loadNpcs();
+      refreshNpcDetail();
       // 📍 得跟着走。以前只在开页和保存后拉地图，于是玩家走了标记还杵在原地
       // ——1B 自己写的验收标准「小地图跟 SSE 动」当时并没做到。
       // 静态层不重建：几何一局不变，白算 65 条路径没意义。
@@ -1390,6 +1398,32 @@ async function loadNpcs() {
   } catch (e) { console.error('npcs', e); }
 }
 
+/** 重拉**当前选中**那个 NPC 的详情（不清空、不闪屏）。
+ *
+ *  以前只有点一下名字才更新：一轮跑完，右侧面板还停在上次点开时的状态，
+ *  "关系/心情/观察"全是旧的——看起来像"NPC 没变化"，其实是面板没刷新。 */
+async function refreshNpcDetail() {
+  if (!S.selNpc) return;
+  try {
+    S.npcDetail = await api('/api/npc/' + encodeURIComponent(S.selNpc));
+    renderPanelsOnly();
+  } catch (e) { console.error('npc refresh', e); }
+}
+
+/** 读档 / 开新局之后：**世界整个换掉了**，右侧面板必须跟着换人。
+ *
+ *  以前这两条路径只做了 `refreshState() + loadHistory()`，于是：
+ *  · 名单还是上一档的（`S.npcs` 没人重拉）
+ *  · 选中的人还挂着，详情还是旧档的（`S.npcDetail` 没人清）
+ *  表现出来就是"新局里还冒出上一档的人"——看着像后端没清干净，其实是面板没换。
+ *  选中项直接清掉：世界换了，上一档看的那个人未必还在。 */
+async function reloadNpcPanels() {
+  S.selNpc = null;
+  S.npcDetail = null;
+  renderPanelsOnly();
+  await loadNpcs();
+}
+
 async function loadCtx(which) {
   try {
     S.ctxCache[which] = await api('/api/context/' + which);
@@ -1449,7 +1483,7 @@ async function send() {
 
 // 移动：`/api/move` 与这个浮层**已退役**（2026-10-08）。
 // 地图是主输入——1B 会给出一张可点击的小地图；在那之前，玩家用打字移动
-// （"我往青木山脉去"本来就是自由文本，由 L3 判去向、代码落坐标）。
+// （"我往青木山脉去"本来就是自由文本，由 N2 判去向、代码落坐标）。
 
 // ══════════════════════════════════════════════════════════════
 // 面板抽屉
@@ -2089,6 +2123,8 @@ $('btnNewGame').onclick = async () => {
   if (!confirm('回到开局？这一局的进度会被清掉。\n'
                + '（save/ 里的存档不会动，随时能读回来）')) return;
   await sendCmd('/new', true);      // 轮次归零、叙事流重建
+  await reloadNpcPanels();          // 世界换了：名单与选中项都得跟着换
+  loadMap({ static: true });        // 新局可能换了世界，几何要重画
 };
 
 // 「重载世界」＝编辑器保存时**自动做的那件事**的手动版：在编辑器外面改了 `.map`

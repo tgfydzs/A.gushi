@@ -780,6 +780,51 @@ class B1WorldLayer:
             self._paths = paths
         return self._paths
 
+    def resolve_place(self, query: str) -> tuple:
+        """
+        模型给的地名 → **唯一**的地块名。返回 `(地块名, 依据)`；对不上返回 `('', 原因)`。
+
+        为什么需要它：模型不会一字不差地抄 `南疆凡人国·云梦国`，它会写"云梦国"（人话就是
+        这么说的）。只认全名 = 玩家说"我要去云梦国"就**原地不动**（实测日志：
+        `去向「云梦国」不在已知地点里，位置不动`）。这不是模型的错，是匹配太死。
+
+        容忍的差异**全是结构上的**，不做语义猜测、不维护词表：
+          1. 精确（地块名或全路径）
+          2. **末段**：`云梦国` → `南疆凡人国·云梦国`
+          3. **任一段**：`古藤废墟` → `荒废传送阵·古藤废墟`
+          4. 子串：`query in 地块名`（如 `云梦` —— 但会同时命中渔火渡）
+
+        ⚠️ **只有唯一命中才采纳**；多个候选一律拒绝并回报"歧义"（宁可不动，也不猜）。
+        ⚠️ 方位表达式（`天道宗上空`、`南面三里`）仍然对不上——那不是能落脚的地块。
+        """
+        q = (query or '').strip().strip('「」《》""''')
+        if not q:
+            return '', '空'
+        paths = self.place_paths() or {}
+        if q in paths:
+            return q, '精确'
+        # 全路径 → 地块名（`name_of` 查不到会原样返回，所以要比一下）
+        by_path = self.name_of(q)
+        if by_path != q and by_path in paths:
+            return by_path, '全路径'
+        q_segs = q.split('·')
+        last = q_segs[-1]
+        # 末段（模型最常写的形态）
+        hit = [n for n in paths if n.split('·')[-1] == last]
+        if len(hit) == 1:
+            return hit[0], f'末段「{last}」'
+        # 任一段
+        hit = [n for n in paths if last in n.split('·')]
+        if len(hit) == 1:
+            return hit[0], f'段「{last}」'
+        # 子串
+        hit = [n for n in paths if last and last in n]
+        if len(hit) == 1:
+            return hit[0], f'子串「{last}」'
+        if len(hit) > 1:
+            return '', f'歧义「{q}」：' + '、'.join(hit[:4])
+        return '', f'没有「{q}」这个地块'
+
     def name_of(self, path_str: str) -> str:
         """
         路径 → 地块名。

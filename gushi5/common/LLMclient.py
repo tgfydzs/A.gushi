@@ -70,8 +70,21 @@ class LayerCfg:
 
 # ===================== 响应解析 =====================
 
+class EmptyReplyError(Exception):
+    """
+    HTTP 200 但**正文为空**——推理把输出预算吃光了。
+
+    实测（2026-10-17）：N3 一次 `out=6854 reason=6854`，即 6854 token 全是思考、
+    正文 0 token（模型想了 2.3 万字，一个字符都没吐）。本项目的协议是 **JSON 只出不进**，
+    空正文永远是无效回复，所以当**可重试失败**处理——不重试的话 `safe_json_loads`
+    会直接抛出去，而各层都没接，结果是**一次空回复打死整轮**。
+    """
+
+
 def _is_retryable(e: Exception, statuses=RETRYABLE_STATUSES) -> bool:
-    """判断异常是否可重试（网络/超时/限流/服务端错误）"""
+    """判断异常是否可重试（网络/超时/限流/服务端错误/空正文）"""
+    if isinstance(e, EmptyReplyError):
+        return True
     if isinstance(e, requests.ConnectionError):
         return True
     if isinstance(e, requests.Timeout):
@@ -212,6 +225,14 @@ class LLMClient:
 
                 elapsed = time.time() - t0
                 reply, reasoning = _extract_reply(res_data)
+                if not reply:
+                    # 空正文 → 当可重试失败（见 EmptyReplyError 的说明）。
+                    # ⚠️ 这一句必须在记"完成"**之前**：否则日志会先把这次失败记成
+                    #     "完成 | 29.6s | out=6854"，延迟统计和失败率一起被污染
+                    #     （gushi3 就栽过"把失败请求记成完成"）。
+                    raise EmptyReplyError(
+                        f'{self.cfg.layer}{tag} 正文为空（推理 {len(reasoning)} 字，'
+                        f'{_fmt_usage(res_data)}）')
                 reason_info = f' reasoning={len(reasoning)}字' if reasoning else ''
                 _llm_log.info(f'{self.cfg.layer}{tag} 完成 | {elapsed:.1f}s | '
                               f'{_fmt_usage(res_data)}{reason_info}')
@@ -293,5 +314,14 @@ class LLMClient:
 # ===================== 自检 =====================
 
 if __name__ == '__main__':
-    for name in ('', 'S1', 'L1', 'L2', 'L3', 'B1a', 'B1b', 'B2'):
+    # ⚠️ 这里原来列的是 gushi4 的层名（S1/L1/L2/L3/B1a/B1b/B2），
+    # 在 gushi5 里一个 `LLMClient('层名')` 都没有 → 打出来全是默认档，
+    # 拿它验 `LAYER_MODEL_OVERRIDE` 会得到"配了没生效"的假结论。
+    # 现在改成真正存在的调用点，与 base_cnf 的"合法键只有 6 个"对齐。
+    #
+    # 入口是 `python -m common.LLMclient`（**在项目根跑**）：本文件第 25 行
+    # `from common.base_cnf import *` 要求项目根在 sys.path 上，
+    # 直接 `python common/LLMclient.py` 只会把 common/ 加进去 → ModuleNotFoundError。
+    # 另：import 本模块要 `DEEPSEEK_API_KEY`（base_cnf 里是 os.environ[...] 硬取）。
+    for name in ('N2', 'N3', 'N45', 'N6', 'N9', 'N9c'):
         print(LayerCfg(name).describe())

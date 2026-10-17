@@ -143,8 +143,8 @@ def api_map():
     小地图的数据：几何（地块/路/范围）+ 当前所在。
 
     **只读、不加锁**（同 `/api/locations`）。移动不走这里——点地图 = 下达**去向**，
-    走的是 `POST /api/input`（合成一句"我往X去"），因为去哪要由 L3 判、
-    落坐标由代码做（见 `地图实施计划.md` 阶段 1A）。
+    走的是 `POST /api/input`（合成一句"我往X去"），因为去哪要由 N2 判（`move_to`）、
+    落坐标由代码做（`GameController.move_player_to`）。
     """
     return jsonify(engine.map_view())
 
@@ -390,8 +390,8 @@ def api_input():
     return jsonify({'action': action})
 
 
-# `/api/move` 已退役（2026-10-08）：地图是主输入，移动走"点地图 → 下达去向"，
-# 位置由 L3 的 `去向` + 代码落坐标（见 地图实施计划.md 阶段 1A / 1B）。
+# `/api/move` 已退役（2026-10-08）：地图是主输入，移动走"打字说去哪 → 下达去向"，
+# 位置由 N2 判的 `move_to`（去向）+ 代码落坐标（`GameController.move_player_to`）。
 
 
 @app.route('/api/command', methods=['POST'])

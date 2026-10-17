@@ -105,7 +105,11 @@ def _collect_refs() -> list:
     """
     from common.game_controller import GameController as GC   # 复用已加载的世界
     refs = []
-    roots = [os.path.join(BASE_PATH, 'data'), os.path.join(BASE_PATH, 'save')]
+    # ⚠️ **只扫 data/**。`save/` 是**运行期产物**：每存一次档就多几十条位置引用，
+    # 于是这个套件会"每存一次档就红一次"——那不是世界内容变了，是基线扫描混进了
+    # 运行期数据（2026-10-17 实测：一天里两次存档就贡献了 60 处假差异）。
+    # 存档里的位置引用本来就该由读档路径自己保证（`migrate_positions` 幂等归一）。
+    roots = [os.path.join(BASE_PATH, 'data')]
 
     def is_pos(v):
         return (isinstance(v, str) and v.strip()) or \

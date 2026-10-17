@@ -38,11 +38,14 @@ class N45_ReasonResponse:
         self.cli = LLMClient('N45')
 
     def response_for_npc(self, npc_inst: B3NPCLayer, perception_msg: str,
-                         context_history: list = None):
+                         context_history: list = None, world_facts: list = None):
         """
         :param npc_inst: NPC实例（原始，未被本轮修改）
         :param perception_msg: N3感知层分发的带方向消息
         :param context_history: 全局对话上下文
+        :param world_facts: **当前世界状态（公开事实）**。不喂它的话，上一轮已经落盘的
+            既成事实（"大阵已裂""某人已接掌"）这一层看不到，NPC 就会继续把已发生的事
+            当成待处理的事——实测连着几轮都在"准备接"。公开事实按定义谁都知道，不违反信息隔离。
         :return: (更新后的B3NPCLayer, response_text: str, inner_thought: str)
         """
         sys_prompt = load_prompt('N45_reason_response_sys.txt')
@@ -52,6 +55,8 @@ class N45_ReasonResponse:
             '对话上下文': context_history if context_history else [],
             '感知输入': perception_msg,
         }
+        if world_facts:
+            user_input['当前世界状态（已发生的公开事实）'] = list(world_facts)
         all_context = [
             {'role': 'system', 'content': sys_prompt},
             {'role': 'user', 'content': json.dumps(user_input, ensure_ascii=False)},
